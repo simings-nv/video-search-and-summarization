@@ -31,6 +31,7 @@ NEMOCLAW_POLICY_FILE="${NEMOCLAW_POLICY_FILE:-${VSS_REPO_DIR}/assets/vss_nemocla
 OPENCLAW_PLUGIN_DIR="${OPENCLAW_PLUGIN_DIR:-${VSS_REPO_DIR}/.openclaw}"
 VSS_NAMESPACE="${VSS_NAMESPACE:-openshell}"
 VSS_REMOTE_CONFIG_PATH="/sandbox/.openclaw/openclaw.json"
+NEMOCLAW_RECREATE_SANDBOX="${NEMOCLAW_RECREATE_SANDBOX:-0}"
 
 log() {
   printf '[init_nemoclaw] %s\n' "$*"
@@ -681,6 +682,7 @@ export_provider_env() {
   export NEMOCLAW_MODEL
   export NEMOCLAW_NON_INTERACTIVE
   export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE
+  export NEMOCLAW_RECREATE_SANDBOX
   export NVIDIA_API_KEY
   if [ "${NEMOCLAW_PROVIDER}" = "custom" ]; then
     export NEMOCLAW_ENDPOINT_URL
@@ -729,6 +731,17 @@ onboard_or_install_sandbox() {
 
 sandbox_exists() {
   have openshell && openshell sandbox get "$NEMOCLAW_SANDBOX_NAME" >/dev/null 2>&1
+}
+
+recreate_sandbox_requested() {
+  case "${NEMOCLAW_RECREATE_SANDBOX}" in
+    1|true|TRUE|yes|YES)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
 }
 
 ensure_nemoclaw_tunnel() {
@@ -800,13 +813,21 @@ main() {
   refresh_path
 
   if sandbox_exists; then
-    log "Sandbox ${NEMOCLAW_SANDBOX_NAME} already exists; skipping NemoClaw onboard/install"
-    configure_openshell_provider
-    ensure_nemoclaw_tunnel
-    if ! wait_for_sandbox_ready "${NEMOCLAW_EXISTING_SANDBOX_READY_TIMEOUT:-90}"; then
-      log "Existing sandbox ${NEMOCLAW_SANDBOX_NAME} is not ready; rerunning NemoClaw setup"
+    if recreate_sandbox_requested; then
+      log "NEMOCLAW_RECREATE_SANDBOX is set; recreating sandbox ${NEMOCLAW_SANDBOX_NAME}"
       onboard_or_install_sandbox
       ensure_nemoclaw_tunnel
+    else
+      log "Sandbox ${NEMOCLAW_SANDBOX_NAME} already exists; skipping NemoClaw onboard/install"
+      configure_openshell_provider
+      ensure_nemoclaw_tunnel
+      if ! wait_for_sandbox_ready "${NEMOCLAW_EXISTING_SANDBOX_READY_TIMEOUT:-90}"; then
+        log "Existing sandbox ${NEMOCLAW_SANDBOX_NAME} is not ready; rerunning NemoClaw setup with sandbox recreation"
+        NEMOCLAW_RECREATE_SANDBOX=1
+        export NEMOCLAW_RECREATE_SANDBOX
+        onboard_or_install_sandbox
+        ensure_nemoclaw_tunnel
+      fi
     fi
   else
     onboard_or_install_sandbox
