@@ -9,6 +9,7 @@ Run:
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import tempfile
 import time
@@ -100,6 +101,64 @@ class HarborCommand(unittest.TestCase):
         self.assertEqual(cmd[cmd.index("--model") + 1], "aws/anthropic/bedrock-claude-opus-4-6")
         self.assertEqual(cmd[cmd.index("--ak") + 1], "api_base=https://inference-api.nvidia.com/v1")
         self.assertEqual(cmd[cmd.index("-o") + 1], "/tmp/results")
+
+
+class TimeoutDefaults(unittest.TestCase):
+    def test_parse_args_uses_bounded_defaults(self):
+        previous = {
+            "SKILL_EVAL_LOCK_TIMEOUT_SEC": os.environ.get("SKILL_EVAL_LOCK_TIMEOUT_SEC"),
+            "SKILL_EVAL_HARBOR_TIMEOUT_SEC": os.environ.get("SKILL_EVAL_HARBOR_TIMEOUT_SEC"),
+        }
+        for key in previous:
+            os.environ.pop(key, None)
+        try:
+            args = run_leg.parse_args(
+                [
+                    "--instance",
+                    "vss-eval-l40s",
+                    "--dataset-root",
+                    "/tmp/ds",
+                    "--results-root",
+                    "/tmp/res",
+                ]
+            )
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+        self.assertEqual(args.lock_timeout_sec, 1800)
+        self.assertEqual(args.harbor_timeout_sec, 5400)
+
+    def test_parse_args_accepts_timeout_env_overrides(self):
+        previous = {
+            "SKILL_EVAL_LOCK_TIMEOUT_SEC": os.environ.get("SKILL_EVAL_LOCK_TIMEOUT_SEC"),
+            "SKILL_EVAL_HARBOR_TIMEOUT_SEC": os.environ.get("SKILL_EVAL_HARBOR_TIMEOUT_SEC"),
+        }
+        os.environ["SKILL_EVAL_LOCK_TIMEOUT_SEC"] = "123"
+        os.environ["SKILL_EVAL_HARBOR_TIMEOUT_SEC"] = "456"
+        try:
+            args = run_leg.parse_args(
+                [
+                    "--instance",
+                    "vss-eval-l40s",
+                    "--dataset-root",
+                    "/tmp/ds",
+                    "--results-root",
+                    "/tmp/res",
+                ]
+            )
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+        self.assertEqual(args.lock_timeout_sec, 123)
+        self.assertEqual(args.harbor_timeout_sec, 456)
 
 
 class SkipMarkers(unittest.TestCase):

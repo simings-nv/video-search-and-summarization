@@ -377,7 +377,7 @@ The canonical harbor command is in § Harbor invocation.
 
       If no hardware-matching candidate exists, **wait** for one — the
       pool is operator-managed and a box may come online mid-run.
-      Re-snapshot `brev ls --json` every 5 min up to the 21000s budget,
+      Re-snapshot `brev ls --json` every 5 min up to the 1800s budget,
       rescoring each time; only after the full budget elapses with zero
       matches do you emit `BLOCKED: pool exhausted for <platform>`. This
       pool-wait is allowed (it waits on a resource that may not yet
@@ -400,14 +400,10 @@ The canonical harbor command is in § Harbor invocation.
         --platform "$EVAL_PLATFORM"
       ```
 
-      The wrapper's flock wait (21000s ≈ 5.8 h) sits just under the per-leg job
-      timeout (`skills-eval.yml` `timeout-minutes: 360` = 6 h), so the
-      agent always reaches the `BLOCKED: lock timeout` line before the
-      job-killer fires (the old 12 h / 43200s budget was for the
-      retired single-job sweep and would have been silently killed
-      mid-wait). If another worker holds the lock past that window,
-      fall back to step 5a and rescore — another box may have come
-      free. Final fallback: emit `BLOCKED: lock timeout` and exit.
+      The wrapper's flock wait defaults to 1800s (30 min), controlled by
+      `SKILL_EVAL_LOCK_TIMEOUT_SEC`. If another worker holds the lock past
+      that window, fall back to step 5a and rescore — another box may have
+      come free. Final fallback: emit `BLOCKED: lock timeout` and exit.
    c. The wrapper drives Harbor one trial at a time (they share GPU/ports
       on the host), exports `BREV_INSTANCE`, discovers single-step vs
       multi-step task layouts, and uses the canonical flags in
@@ -517,7 +513,7 @@ The canonical harbor command is in § Harbor invocation.
   `run_leg.py` for the structurally locked Harbor run.
   If no hardware-matching pool member exists for the trial's
   platform, follow the wait-for-pool path in § 5a (5-min `brev ls`
-  poll, 21000s budget, then `BLOCKED: pool exhausted for
+  poll, 1800s budget, then `BLOCKED: pool exhausted for
   <platform>`) — provisioning is the operator's job.
 - **Never dispatch code from non-mirror branches.** You only ever
   process `pull-request/<N>` SHAs; those are CPR-bot vetted. If you
@@ -688,8 +684,9 @@ real failure: the wrapper exits 4, see § Output requirements).
 Don't background the trial (`run_in_background`, `&`/`nohup`/`disown`):
 the harness blocks those and raises the Bash timeout cap so the long
 foreground wrapper call is not auto-backgrounded into a pollable task.
-`run_leg.py` applies a 7800s hard backstop to each internal Harbor
-subprocess. To peek at a stuck trial, do it ONCE after the wrapper
+`run_leg.py` applies a 5400s hard backstop to each internal Harbor
+subprocess by default (`SKILL_EVAL_HARBOR_TIMEOUT_SEC`). To peek at a
+stuck trial, do it ONCE after the wrapper
 returns, never in a loop while it is running.
 
 If a trial errors out, read `$RES/<date>/<trial>/trial.log` —
@@ -906,7 +903,7 @@ separate; don't conflate the two.
   have run; include the reward if present.
 - **Pool exhausted for the trial's platform.** `brev ls` shows zero
   RUNNING+READY `^vss-eval-*` boxes whose `gpu_type` matches. Wait
-  per § 5a (5-min `brev ls` poll, up to 21000s budget). If no
+  per § 5a (5-min `brev ls` poll, up to 1800s budget). If no
   matching candidate appears within the window, emit
   `BLOCKED: pool exhausted for <platform>` and exit. Do NOT
   `brev create`, `brev start`, or `brev reset` — the operator
@@ -918,8 +915,8 @@ separate; don't conflate the two.
   3x. If still failing, emit `BLOCKED: anthropic rate limit` and
   exit.
 - **Lock contention** (another CI run holds the Brev lock). `run_leg.py`
-  waits up to ~5.8 h (`--lock-timeout-sec 21000`, under the per-leg job
-  timeout). If it times out, emit `BLOCKED: lock timeout on <instance>`.
+  waits up to 1800s by default (`SKILL_EVAL_LOCK_TIMEOUT_SEC`). If it
+  times out, emit `BLOCKED: lock timeout on <instance>`.
 
 ## Single-spec mode
 

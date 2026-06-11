@@ -81,9 +81,8 @@ AGENTS_MD = Path(__file__).resolve().parent / "AGENTS.md"
 # without prior context) — each "discovery" burst is 5-10 turns of
 # Read/Grep/Bash spelunking on top of the steady-state per-trial
 # cost. Bumping to 2000 absorbs that overhead without lifting the
-# real ceiling (skills-eval.yml timeout-minutes: 360 is the wall-
-# clock gate; this knob is just a safety valve against runaway
-# loops).
+# real ceiling (skills-eval.yml timeout-minutes is the wall-clock
+# gate; this knob is just a safety valve against runaway loops).
 MAX_TURNS = int(os.environ.get("AGENT_MAX_TURNS", "2000"))
 
 # ---------------------------------------------------------------------------
@@ -131,9 +130,10 @@ def _set_bash_timeouts() -> None:
     crosses the Bash *max* timeout (default 600000 ms = 10 min), then
     surfaces it as pollable task output. That silently defeats AGENTS.md's
     "block on run_leg.py / Harbor -- no polling" contract. A full leg can
-    include lock contention plus multiple ordered Harbor subprocesses, so the
-    foreground cap must cover the workflow job window, not just one Harbor
-    attempt. Past the cap the foreground call is backgrounded and the agent
+    include lock contention plus one or more ordered Harbor subprocesses, so
+    the foreground cap must cover the bounded wrapper call, not just one
+    default 10-minute Bash attempt. Past the cap the foreground call is
+    backgrounded and the agent
     falls into polling its task .output files. The
     `_block_bash_background` hook can't prevent it: the runtime sets
     run_in_background *after* the timeout, not in the call input the hook
@@ -141,8 +141,8 @@ def _set_bash_timeouts() -> None:
     exports these too; set them here defensively so local smoke-tests and any
     non-CI caller get the same guarantee. Both stay under the workflow's
     timeout-minutes so a genuinely hung call is still reaped by the job."""
-    os.environ.setdefault("BASH_DEFAULT_TIMEOUT_MS", "21600000")  # 6h
-    os.environ.setdefault("BASH_MAX_TIMEOUT_MS", "21600000")      # 6h
+    os.environ.setdefault("BASH_DEFAULT_TIMEOUT_MS", "7200000")   # 2h
+    os.environ.setdefault("BASH_MAX_TIMEOUT_MS", "10800000")      # 3h
 
 
 # ---------------------------------------------------------------------------

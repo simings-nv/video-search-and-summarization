@@ -44,7 +44,7 @@ permissions:
 # `BrevEnvironment._ensure_prerequisite_deployed`: the active-deploy marker
 # carries `<profile_tag>|<run_id>`, so a marker from this run never matches
 # the next run's desired marker and the next run always tears down + redeploys.
-# Same path handles SIGKILL (the 12h timeout-minutes terminator) and host reboots
+# Same path handles SIGKILL (the job timeout-minutes terminator) and host reboots
 # — there's no exit-side cleanup machinery to bypass.
 concurrency:
   group: skills-eval-daily-${{ github.ref }}
@@ -96,15 +96,9 @@ jobs:
       # all grab a runner slot only to block on flock. Excess legs queue.
       max-parallel: 4
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
-    # Per-leg cap. One spec, but a multi-step spec runs step-1..N as
-    # sequential harbor invocations, each up to the 1 h agent ceiling
-    # (AGENTS.md `--agent-timeout-multiplier 6.0`). 360m covers a ~4-step
-    # cold-box spec plus deploy/dataset/comment overhead without the
-    # whole-sweep 12 h cap the single-job design needed. AGENTS.md's
-    # box-lock wait (flock -w 21000 ≈ 5.8 h) is kept strictly under this
-    # 360 m ceiling so a lock-starved leg emits `BLOCKED: lock timeout`
-    # before the job-killer fires (a 43200 s / 12 h wait would be
-    # silently killed mid-flock with no verdict — the exit-4 trap).
+    # Per-leg cap. run_leg.py bounds worker-lock waits and individual Harbor
+    # invocations below this window, so a stuck leg returns a BLOCKED/timeout
+    # result with artifacts instead of being killed by the GitHub job timer.
     timeout-minutes: 360
     steps:
       - name: Checkout mirror head
@@ -141,11 +135,17 @@ jobs:
           # stay under the job's timeout-minutes so the call can't outlive it.
           BASH_DEFAULT_TIMEOUT_MS: "7200000"
           BASH_MAX_TIMEOUT_MS: "10800000"
+          SKILL_EVAL_LOCK_TIMEOUT_SEC: "1800"
+          SKILL_EVAL_HARBOR_TIMEOUT_SEC: "5400"
         run: |
           mkdir -p "$GH_CONFIG_DIR"
           set -a
           source /home/ubuntu/eval-coordinator/.env   # Anthropic / NGC / Brev
           set +a
+          # Force bounded CI waits after sourcing host env. Capacity blockers
+          # should report as BLOCKED, not consume the full 6h job window.
+          export SKILL_EVAL_LOCK_TIMEOUT_SEC=1800
+          export SKILL_EVAL_HARBOR_TIMEOUT_SEC=5400
           export PR_HEAD_SHA="${{ github.sha }}"
           export PR_REPO="${{ github.repository }}"
           export GITHUB_RUN_ID="${{ github.run_id }}"

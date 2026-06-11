@@ -29,6 +29,11 @@ STEP_COUNT_RE = re.compile(r"^\s*step_count\s*=\s*(\d+)\s*$", re.MULTILINE)
 SAFE_PART_RE = re.compile(r"[^A-Za-z0-9_-]+")
 
 
+def _env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    return int(value) if value else default
+
+
 @dataclasses.dataclass(frozen=True)
 class HarborInvocation:
     """One concrete `uvx harbor run` invocation."""
@@ -351,8 +356,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--spec-stem", default=os.environ.get("EVAL_SPEC_STEM", ""))
     parser.add_argument("--platform", default=os.environ.get("EVAL_PLATFORM", ""))
     parser.add_argument("--lock-dir", default=Path("/tmp/brev"), type=Path)
-    parser.add_argument("--lock-timeout-sec", default=21000, type=int)
-    parser.add_argument("--harbor-timeout-sec", default=7800, type=int)
+    parser.add_argument(
+        "--lock-timeout-sec",
+        default=_env_int("SKILL_EVAL_LOCK_TIMEOUT_SEC", 1800),
+        type=int,
+    )
+    parser.add_argument(
+        "--harbor-timeout-sec",
+        default=_env_int("SKILL_EVAL_HARBOR_TIMEOUT_SEC", 5400),
+        type=int,
+    )
     return parser.parse_args(argv)
 
 
