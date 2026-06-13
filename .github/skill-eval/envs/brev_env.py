@@ -321,7 +321,7 @@ class BrevEnvironment(BaseEnvironment):
             ("CLAUDE_CODE_DISABLE_THINKING", "1"),
         ]
         for key in (
-            "NGC_CLI_API_KEY", "NVIDIA_API_KEY", "HF_TOKEN",
+            "NGC_CLI_API_KEY", "NGC_API_KEY", "NVIDIA_API_KEY", "HF_TOKEN",
             "LLM_REMOTE_URL", "LLM_REMOTE_MODEL",
             "VLM_REMOTE_URL", "VLM_REMOTE_MODEL",
             # Use the CI evaluation model for the OpenClaw/NemoClaw agent
