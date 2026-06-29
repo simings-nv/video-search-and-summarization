@@ -39,3 +39,14 @@ Feature: VST Storage Management Service API Unit Tests
     Given the VST storage management API is accessible
     When I request the protected file list
     Then the storage response status is 200
+
+  # Regression for NVBug 6141778: reject reversed delete-videos time range (startTime > endTime)
+  Scenario: Delete videos rejects a reversed time range
+    Given the VST storage management API is accessible
+    When I request to delete videos with a reversed time range
+    Then the delete videos response status is 400
+
+  Scenario: Delete videos accepts a valid forward time range
+    Given the VST storage management API is accessible
+    When I request to delete videos with a valid forward time range
+    Then the delete videos response status is 200
