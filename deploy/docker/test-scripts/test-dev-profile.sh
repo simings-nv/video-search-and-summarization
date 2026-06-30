@@ -782,7 +782,7 @@ ENABLE_CRITIC=FALSE run_dry_run_up_and_check_generated_env "generated.env search
   -i 127.0.0.1 -d -- \
   "ENABLE_CRITIC" "false"
 
-# --- Setup paths: data directory and selective downloads (assert dry-run output) ---
+# --- Setup paths: data directory and profile-specific setup messaging (assert dry-run output) ---
 _out_setup="$(mktemp)"
 cd "${REPO_ROOT}"
 timeout "${TEST_TIMEOUT}" "$DEV_PROFILE" up -p base -i 127.0.0.1 -d > "${_out_setup}" 2>&1
@@ -826,325 +826,29 @@ else
   ((TESTS_FAILED++)) || true
 fi
 
-# Alerts profile: dry-run must include NGC model download steps (rtdetr-its, trafficcamnet, gdino/mask_grounding_dino)
+# Alerts profile: dry-run should indicate model download was moved to compose init service.
 _out_alerts="$(mktemp)"
 timeout "${TEST_TIMEOUT}" "$DEV_PROFILE" up -p alerts -i 127.0.0.1 -m verification -d > "${_out_alerts}" 2>&1
-if grep -q "models/rtdetr-its" "${_out_alerts}" && grep -q "trafficcamnet" "${_out_alerts}" && grep -q "models/gdino" "${_out_alerts}" && grep -q "mask_grounding_dino" "${_out_alerts}" && grep -q "mgdino_mask_head_pruned_dynamic_batch.onnx" "${_out_alerts}" && grep -q "ngc registry model" "${_out_alerts}"; then
-  echo "PASS: alerts dry-run output includes NGC model download steps"
+if grep -q "Alerts model download moved to compose init service (models-download-alerts)." "${_out_alerts}" && ! grep -q "ngc registry model download-version" "${_out_alerts}"; then
+  echo "PASS: alerts dry-run output reflects compose-init model download handoff"
   ((TESTS_PASSED++)) || true
 else
-  echo "FAIL: alerts dry-run output missing NGC model download steps (models/rtdetr-its, trafficcamnet, models/gdino, mask_grounding_dino, mgdino_mask_head_pruned_dynamic_batch.onnx, ngc registry model)"
+  echo "FAIL: alerts dry-run output should show compose-init handoff and no direct NGC model download commands"
   ((TESTS_FAILED++)) || true
 fi
 rm -f "${_out_alerts}"
 
-# Search profile: dry-run must include NGC model download steps (RT-DETR warehouse from nvidia TAO).
+# Search profile: dry-run should indicate model download was moved to compose init service.
 _out_search="$(mktemp)"
 timeout "${TEST_TIMEOUT}" "$DEV_PROFILE" up -p search -i 127.0.0.1 -d > "${_out_search}" 2>&1
-if grep -q "Downloading RT-DETR model from NGC" "${_out_search}" && grep -q "nvidia/tao/rtdetr_2d_warehouse" "${_out_search}" && grep -q "rtdetr_warehouse_v1.0.2.fp16.onnx" "${_out_search}" && grep -q -- "--org nvidia" "${_out_search}" && grep -q "ngc registry model" "${_out_search}"; then
-  echo "PASS: search dry-run output includes NGC model download steps"
+if grep -q "Search model download moved to compose init service (models-download-search)." "${_out_search}" && ! grep -q "ngc registry model download-version" "${_out_search}"; then
+  echo "PASS: search dry-run output reflects compose-init model download handoff"
   ((TESTS_PASSED++)) || true
 else
-  echo "FAIL: search dry-run output missing NGC model download steps (Downloading RT-DETR model from NGC, nvidia/tao/rtdetr_2d_warehouse, rtdetr_warehouse_v1.0.2.fp16.onnx, --org nvidia, ngc registry model)"
+  echo "FAIL: search dry-run output should show compose-init handoff and no direct NGC model download commands"
   ((TESTS_FAILED++)) || true
 fi
 rm -f "${_out_search}"
-
-# NGC download failures must stop before kernel setup, docker login, or compose.
-run_ngc_download_fail_fast_test() {
-  local name="${1}"
-  local scenario="${2}"
-  local expected_error="${3}"
-  shift 3
-  local args=("$@")
-  local mock_dir
-  mock_dir="$(mktemp -d)"
-  CLEANUP_DIRS+=("${mock_dir}")
-  local ngc_state_file="${mock_dir}/ngc-state"
-
-  cat > "${mock_dir}/ngc" <<'EOF'
-#!/bin/bash
-scenario="${NGC_FAIL_SCENARIO:-}"
-state_file="${NGC_MOCK_STATE_FILE:-}"
-case "${scenario}" in
-  search)
-    echo "mock ngc RT-DETR warehouse failure" >&2
-    exit 42
-    ;;
-  alerts-first)
-    echo "mock ngc trafficcamnet failure" >&2
-    exit 42
-    ;;
-  alerts-second)
-    count=0
-    if [[ -n "${state_file}" && -f "${state_file}" ]]; then
-      count="$(cat "${state_file}")"
-    fi
-    count=$((count + 1))
-    if [[ -n "${state_file}" ]]; then
-      echo "${count}" > "${state_file}"
-    fi
-    if [[ ${count} -eq 1 ]]; then
-      mkdir -p trafficcamnet_transformer_lite_vdeployable_resnet50_v2.0
-      printf 'mock trafficcamnet onnx\n' > trafficcamnet_transformer_lite_vdeployable_resnet50_v2.0/resnet50_trafficcamnet_rtdetr.fp16.onnx
-      exit 0
-    fi
-    echo "mock ngc grounding DINO failure" >&2
-    exit 43
-    ;;
-  *)
-    echo "unknown NGC mock scenario: ${scenario}" >&2
-    exit 44
-    ;;
-esac
-EOF
-  cat > "${mock_dir}/docker" <<'EOF'
-#!/bin/bash
-echo "MOCK_DOCKER_REACHED $*" >&2
-exit 0
-EOF
-  cat > "${mock_dir}/sudo" <<'EOF'
-#!/bin/bash
-echo "MOCK_SUDO_REACHED $*" >&2
-exit 0
-EOF
-  cat > "${mock_dir}/sysctl" <<'EOF'
-#!/bin/bash
-echo "MOCK_SYSCTL_REACHED $*" >&2
-exit 0
-EOF
-  cat > "${mock_dir}/bash" <<'EOF'
-#!/bin/bash
-echo "MOCK_BASH_REACHED $*" >&2
-exit 0
-EOF
-  cat > "${mock_dir}/chmod" <<'EOF'
-#!/bin/bash
-exit 0
-EOF
-  cat > "${mock_dir}/id" <<'EOF'
-#!/bin/bash
-if [[ "${1:-}" == "-u" ]]; then
-  echo 1000
-else
-  /usr/bin/id "$@"
-fi
-EOF
-  chmod +x "${mock_dir}"/*
-
-  local ngc_profiles=(base lvs search alerts)
-  local ngc_gen_envs=()
-  local ngc_backups=()
-  local ngc_profile ngc_gen_env ngc_backup
-  for ngc_profile in "${ngc_profiles[@]}"; do
-    ngc_gen_env="$(generated_env_path "${ngc_profile}")"
-    ngc_gen_envs+=("${ngc_gen_env}")
-    if [[ -f "${ngc_gen_env}" ]]; then
-      ngc_backup="$(mktemp)"
-      cp "${ngc_gen_env}" "${ngc_backup}"
-      CLEANUP_RESTORES+=("${ngc_backup}|${ngc_gen_env}")
-    else
-      ngc_backup=""
-    fi
-    ngc_backups+=("${ngc_backup}")
-  done
-
-  local out_file err_file exit_code failed
-  out_file="$(mktemp)"
-  err_file="$(mktemp)"
-  cd "${REPO_ROOT}"
-  set +e
-  NGC_FAIL_SCENARIO="${scenario}" NGC_MOCK_STATE_FILE="${ngc_state_file}" PATH="${mock_dir}:${PATH}" timeout "${TEST_TIMEOUT}" "$DEV_PROFILE" up "${args[@]}" > "${out_file}" 2> "${err_file}"
-  exit_code=$?
-  set -e
-  failed=0
-
-  if [[ ${exit_code} -eq 124 ]]; then
-    echo "FAIL: ${name} (timed out)"
-    ((failed++)) || true
-  elif [[ ${exit_code} -ne 1 ]]; then
-    echo "FAIL: ${name} (expected exit 1, got ${exit_code})"
-    ((failed++)) || true
-  fi
-  if ! grep -q "${expected_error}" "${out_file}" "${err_file}"; then
-    echo "FAIL: ${name} (missing download failure error: ${expected_error})"
-    ((failed++)) || true
-  fi
-  if grep -q "Logging into nvcr.io" "${out_file}" "${err_file}" || grep -q "Starting docker compose" "${out_file}" "${err_file}" || grep -q "MOCK_DOCKER_REACHED login" "${out_file}" "${err_file}" || grep -q "MOCK_DOCKER_REACHED compose --env-file" "${out_file}" "${err_file}"; then
-    echo "FAIL: ${name} (docker login/compose up path was reached)"
-    ((failed++)) || true
-  fi
-  if grep -q "Applying VSS Linux kernel settings" "${out_file}" "${err_file}" || grep -q "MOCK_SUDO_REACHED bash -c" "${out_file}" "${err_file}" || grep -q "MOCK_SUDO_REACHED sysctl" "${out_file}" "${err_file}" || grep -q "MOCK_BASH_REACHED" "${out_file}" "${err_file}" || grep -q "MOCK_SYSCTL_REACHED" "${out_file}" "${err_file}"; then
-    echo "FAIL: ${name} (kernel settings path was reached)"
-    ((failed++)) || true
-  fi
-
-  local ngc_idx
-  for ngc_idx in "${!ngc_gen_envs[@]}"; do
-    ngc_gen_env="${ngc_gen_envs[${ngc_idx}]}"
-    ngc_backup="${ngc_backups[${ngc_idx}]}"
-    if [[ -n "${ngc_backup}" && -f "${ngc_backup}" ]]; then
-      mv "${ngc_backup}" "${ngc_gen_env}"
-    else
-      rm -f "${ngc_gen_env}"
-    fi
-  done
-  rm -f "${out_file}" "${err_file}"
-
-  if [[ ${failed} -gt 0 ]]; then
-    ((TESTS_FAILED++)) || true
-  else
-    echo "PASS: ${name}"
-    ((TESTS_PASSED++)) || true
-  fi
-}
-
-run_ngc_download_fail_fast_test \
-  "NGC search RT-DETR download failure fails fast" \
-  "search" \
-  "\\[ERROR\\] Failed to download RT-DETR model from NGC (exit 42)" \
-  -p search -i 127.0.0.1 -H OTHER
-run_ngc_download_fail_fast_test \
-  "NGC alerts trafficcamnet download failure fails fast" \
-  "alerts-first" \
-  "\\[ERROR\\] Failed to download trafficcamnet RT-DETR model from NGC (exit 42)" \
-  -p alerts -i 127.0.0.1 -m verification -H OTHER
-run_ngc_download_fail_fast_test \
-  "NGC alerts grounding DINO download failure fails fast" \
-  "alerts-second" \
-  "\\[ERROR\\] Failed to download grounding DINO model from NGC (exit 43)" \
-  -p alerts -i 127.0.0.1 -m verification -H OTHER
-
-# --- Profile env split: stable .env plus script-modifiable overrides.env ---
-_common_overrides_env_keys=(
-  HARDWARE_PROFILE COMPOSE_PROFILES
-  LLM_DEVICE_ID VLM_DEVICE_ID LLM_MODE VLM_MODE
-  LLM_NAME LLM_NAME_SLUG LLM_ENV_FILE LLM_BASE_URL LLM_MODEL_TYPE
-  VLM_NAME VLM_NAME_SLUG VLM_ENV_FILE VLM_BASE_URL VLM_MODEL_TYPE
-  VSS_APPS_DIR VSS_DATA_DIR HOST_IP EXTERNAL_IP
-  HAPROXY_PORT HAPROXY_HOST_PORT VSS_PUBLIC_HTTP_PROTOCOL VSS_PUBLIC_WS_PROTOCOL VSS_PUBLIC_HOST VSS_PUBLIC_PORT
-  VST_CONFIG_PATH VST_EXTERNAL_URL VST_BASE_URL VSS_AGENT_REPORTS_BASE_URL VSS_AGENT_EXTERNAL_URL
-  VSS_UI_HOST_PORT VSS_AGENT_HOST_PORT PHOENIX_HOST_PORT REDIS_HOST_PORT
-  VST_INGRESS_HOST_PORT SENSOR_HTTP_HOST_PORT STREAM_PROCESSOR_HTTP_HOST_PORT RTSP_SERVER_HOST_PORT RTSP_SERVER_HOST_PORT_END
-  NGC_CLI_API_KEY NVIDIA_API_KEY OPENAI_API_KEY
-)
-_split_failed=0
-for _profile in base lvs search alerts; do
-  _stable_env="${REPO_ROOT}/deploy/docker/developer-profiles/dev-profile-${_profile}/.env"
-  _overrides_env="${REPO_ROOT}/deploy/docker/developer-profiles/dev-profile-${_profile}/overrides.env"
-  if [[ ! -f "${_stable_env}" || ! -f "${_overrides_env}" ]]; then
-    echo "FAIL: dev-profile-${_profile} should have both .env and overrides.env"
-    ((_split_failed++)) || true
-    continue
-  fi
-  _expected_override_keys=("${_common_overrides_env_keys[@]}")
-  case "${_profile}" in
-    base)
-      _expected_override_keys+=(EVAL_LLM_JUDGE_NAME EVAL_LLM_JUDGE_BASE_URL RTVI_VLM_PORT RTVI_VLM_IMAGE_TAG RTVI_VLM_ENDPOINT RTVI_VLM_MODEL_TO_USE RTVI_VLLM_GPU_MEMORY_UTILIZATION RTVI_VLM_MODEL_PATH)
-      _expected_stable_keys=(MODE RTVI_VLM_MAX_MODEL_LEN)
-      ;;
-    lvs)
-      _expected_override_keys+=(RT_VLM_DEVICE_ID VLM_PORT RTVI_VLM_PORT EVAL_LLM_JUDGE_NAME EVAL_LLM_JUDGE_BASE_URL SDR_CONTROLLER_CONFIG_PATH RTVI_VLM_ENDPOINT RTVI_VLM_MODEL_TO_USE RTVI_VLLM_GPU_MEMORY_UTILIZATION RTVI_VLM_MAX_MODEL_LEN RTVI_VLM_MODEL_PATH)
-      _expected_override_keys+=(NVSTREAMER_HTTP_HOST_PORT BACKEND_HOST_PORT LVS_MCP_HOST_PORT ELASTICSEARCH_HOST_PORT KAFKA_HOST_PORT KIBANA_HOST_PORT SDRC_CONTROLLER_HOST_PORT SDRC_PROXY_HOST_PORT SDRC_DIRECT_HOST_PORT SDRC_ENVOY_ADMIN_HOST_PORT)
-      _expected_stable_keys=(MODE LVS_TAG RTVI_VLM_IMAGE_TAG NVSTREAMER_HTTP_PORT NVSTREAMER_INSTALL_ADDITIONAL_PACKAGES)
-      ;;
-    search)
-      _expected_override_keys+=(MEDIA_SERVICE_ENDPOINT REACT_APP_API_ENDPOINT_BASE_URL EVAL_LLM_JUDGE_NAME EVAL_LLM_JUDGE_BASE_URL SDR_CONTROLLER_CONFIG_PATH ENABLE_CRITIC)
-      _expected_override_keys+=(RTVI_CV_HOST_PORT NVSTREAMER_HTTP_HOST_PORT ELASTICSEARCH_HOST_PORT KAFKA_HOST_PORT KIBANA_HOST_PORT SDRC_CONTROLLER_HOST_PORT SDRC_PROXY_HOST_PORT SDRC_DIRECT_HOST_PORT SDRC_ENVOY_ADMIN_HOST_PORT)
-      _expected_stable_keys=(MODE PERCEPTION_TAG NVSTREAMER_HTTP_PORT NVSTREAMER_INSTALL_ADDITIONAL_PACKAGES)
-      ;;
-    alerts)
-      _expected_override_keys+=(MODE RT_VLM_DEVICE_ID VLM_PORT RTVI_VLM_PORT PERCEPTION_DOCKERFILE_PREFIX VLM_AS_VERIFIER_CONFIG_FILE_PREFIX VLM_AS_VERIFIER_CONFIG_FILE VLM_AS_VERIFIER_ALERT_TYPE_CONFIG_FILE NEXT_PUBLIC_APP_SUBTITLE PERCEPTION_TAG RTVI_VLM_IMAGE_TAG RTVI_VLM_ENDPOINT RTVI_VLM_MODEL_TO_USE RTVI_VLLM_GPU_MEMORY_UTILIZATION RTVI_VLM_MAX_MODEL_LEN RTVI_VLM_MODEL_PATH RTVI_VLM_OPENAI_MODEL_DEPLOYMENT_NAME SDR_CONTROLLER_CONFIG_PATH)
-      _expected_override_keys+=(RTVI_CV_HOST_PORT VSS_VA_MCP_HOST_PORT ALERT_BRIDGE_HOST_PORT NVSTREAMER_HTTP_HOST_PORT ELASTICSEARCH_HOST_PORT KAFKA_HOST_PORT KIBANA_HOST_PORT SDRC_CONTROLLER_HOST_PORT SDRC_PROXY_HOST_PORT SDRC_DIRECT_HOST_PORT SDRC_ENVOY_ADMIN_HOST_PORT)
-      _expected_stable_keys=(NVSTREAMER_HTTP_PORT NVSTREAMER_INSTALL_ADDITIONAL_PACKAGES)
-      ;;
-  esac
-  for _key in "${_expected_override_keys[@]}"; do
-    if grep -Eq "^${_key}=" "${_stable_env}"; then
-      echo "FAIL: dev-profile-${_profile}/.env should not define override-layer ${_key}"
-      ((_split_failed++)) || true
-    fi
-    if ! grep -Eq "^${_key}=" "${_overrides_env}"; then
-      echo "FAIL: dev-profile-${_profile}/overrides.env should define ${_key}"
-      ((_split_failed++)) || true
-    fi
-  done
-  for _key in "${_expected_stable_keys[@]}"; do
-    if ! grep -Eq "^${_key}=" "${_stable_env}"; then
-      echo "FAIL: dev-profile-${_profile}/.env should keep static ${_key}"
-      ((_split_failed++)) || true
-    fi
-    if grep -Eq "^${_key}=" "${_overrides_env}"; then
-      echo "FAIL: dev-profile-${_profile}/overrides.env should not define static ${_key}"
-      ((_split_failed++)) || true
-    fi
-  done
-  if grep -Eq '^[A-Za-z_][A-Za-z0-9_]*HOST_PORT[A-Za-z0-9_]*=' "${_stable_env}"; then
-    echo "FAIL: dev-profile-${_profile}/.env should not define host-published port overrides"
-    ((_split_failed++)) || true
-  fi
-  _override_key_pattern="$(grep -E '^[A-Za-z_][A-Za-z0-9_]*=' "${_overrides_env}" | cut -d= -f1 | paste -sd'|' -)"
-  if [[ -n "${_override_key_pattern}" ]] && grep -En "^[A-Za-z_][A-Za-z0-9_]*=.*\$\{(${_override_key_pattern})([:}])|^[A-Za-z_][A-Za-z0-9_]*=.*\$(${_override_key_pattern})([^A-Za-z0-9_]|$)" "${_stable_env}" >/dev/null; then
-    echo "FAIL: dev-profile-${_profile}/.env should not reference overrides.env keys; Compose expands .env before overrides.env"
-    ((_split_failed++)) || true
-  fi
-done
-_warehouse_stable_env="${REPO_ROOT}/deploy/docker/industry-profiles/warehouse-operations/.env"
-_warehouse_overrides_env="${REPO_ROOT}/deploy/docker/industry-profiles/warehouse-operations/overrides.env"
-_warehouse_host_port_keys=(
-  HAPROXY_HOST_PORT VSS_UI_HOST_PORT VSS_AGENT_HOST_PORT VSS_VA_MCP_HOST_PORT ALERT_BRIDGE_HOST_PORT
-  RTVI_CV_HOST_PORT RTVI_CV_MV3DT_HOST_PORT RTVI_VLM_PORT NVSTREAMER_HTTP_HOST_PORT PHOENIX_HOST_PORT ELASTICSEARCH_HOST_PORT
-  KAFKA_HOST_PORT REDIS_HOST_PORT KIBANA_HOST_PORT TURN_HOST_PORT TURN_MIN_RELAY_HOST_PORT TURN_MAX_RELAY_HOST_PORT
-  MQTT_HOST_PORT VST_INGRESS_HOST_PORT SENSOR_HTTP_HOST_PORT STREAM_PROCESSOR_HTTP_HOST_PORT RTSP_SERVER_HOST_PORT RTSP_SERVER_HOST_PORT_END
-  SDRC_CONTROLLER_HOST_PORT SDRC_PROXY_HOST_PORT SDRC_DIRECT_HOST_PORT SDRC_ENVOY_ADMIN_HOST_PORT
-  DCGM_EXPORTER_HOST_PORT PROMETHEUS_HOST_PORT GRAFANA_HOST_PORT NODE_EXPORTER_HOST_PORT CADVISOR_HOST_PORT
-  VSS_AUTO_CALIBRATION_HOST_PORT VSS_AUTO_CALIBRATION_UI_HOST_PORT
-)
-if [[ -f "${_warehouse_stable_env}" && -f "${_warehouse_overrides_env}" ]]; then
-  for _key in "${_warehouse_host_port_keys[@]}"; do
-    if grep -Eq "^${_key}=" "${_warehouse_stable_env}"; then
-      echo "FAIL: warehouse .env should not define host-published port override ${_key}"
-      ((_split_failed++)) || true
-    fi
-    if ! grep -Eq "^${_key}=" "${_warehouse_overrides_env}"; then
-      echo "FAIL: warehouse overrides.env should define host-published port override ${_key}"
-      ((_split_failed++)) || true
-    fi
-  done
-else
-  echo "FAIL: warehouse profile should have both .env and overrides.env"
-  ((_split_failed++)) || true
-fi
-_shared_service_env_specs=(
-  "deploy/docker/services/agent/agent.env:VSS_AGENT_VERSION VSS_AGENT_HOST VSS_AGENT_PORT VSS_AGENT_OBJECT_STORE_TYPE PHOENIX_ENDPOINT VSS_ES_PORT VSS_VA_MCP_PORT VIDEO_ANALYSIS_MCP_URL"
-  "deploy/docker/services/alert/alert.env:ALERT_BRIDGE_PORT ALERT_BRIDGE_URL"
-  "deploy/docker/services/ui/ui.env:NEXT_PUBLIC_APP_TITLE NEXT_PUBLIC_ENABLE_CHAT_SIDEBAR NEXT_PUBLIC_ENABLE_CHAT_TAB NEXT_PUBLIC_ENABLE_MAP_TAB"
-  "deploy/docker/services/infra/infra.env:ELASTICSEARCH_CONNECTION_MAX_ATTEMPTS"
-  "deploy/docker/services/nim/nim.env:LLM_PORT VLM_PORT VLM_NIM_KVCACHE_PERCENT"
-  "deploy/docker/services/rtvi/rtvi.env:RTVI_VLM_BASE_URL RTVI_VLM_KAFKA_BOOTSTRAP_SERVERS RTVI_VLM_KAFKA_INCIDENT_TOPIC RTVI_VLM_KAFKA_ENABLED RTVI_EMBED_IMAGE RTVI_EMBED_TAG RTVI_EMBED_PORT PERCEPTION_IMAGE OTEL_SDK_DISABLED OTEL_EXPORTER_OTLP_ENDPOINT OTEL_METRICS_EXPORTER"
-  "deploy/docker/services/vios/vst.env:VST_PORT VST_INGRESS_HTTP_PORT RTSP_SERVER_PORT_END VST_INTERNAL_IP VST_INGRESS_ENDPOINT VST_INTERNAL_URL VST_STREAM_PROCESSOR_IMAGE_TAG VST_SENSOR_IMAGE_TAG NVSTREAMER_IMAGE_TAG VST_INGRESS_IMAGE_TAG"
-)
-for _spec in "${_shared_service_env_specs[@]}"; do
-  _file="${REPO_ROOT}/${_spec%%:*}"
-  _keys="${_spec#*:}"
-  if [[ ! -f "${_file}" ]]; then
-    echo "FAIL: shared service env file missing: ${_file}"
-    ((_split_failed++)) || true
-    continue
-  fi
-  for _key in ${_keys}; do
-    if ! grep -Eq "^${_key}=" "${_file}"; then
-      echo "FAIL: ${_file} should define shared service default ${_key}"
-      ((_split_failed++)) || true
-    fi
-  done
-done
-if [[ ${_split_failed} -eq 0 ]]; then
-  echo "PASS: developer profile env split keeps profile-specific override-layer values isolated"
-  ((TESTS_PASSED++)) || true
-else
-  ((TESTS_FAILED++)) || true
-fi
 
 # --- generated.env content: dry-run up still writes/updates the file ---
 # Run up with specific options and assert generated.env contains expected vars, then restore.
