@@ -35,6 +35,7 @@ The current spec (`profile_in_1_streaming_dense_captions.json`) targets:
         skills/vss-build-vision-agent/   (full skill copy)
         skills/vss-manage-video-io-storage/   (bundled — skill invokes VIOS API after deploy)
         skills/vss-deploy-dense-captioning/   (bundled — RT-VLM API checks post-deploy)
+        skills/vss-summarize-video/      (bundled when present — LVS summarize API checks)
         environment/Dockerfile           (FROM scratch; BrevEnvironment takes over)
 
 Usage from the repository root:
@@ -43,6 +44,7 @@ Usage from the repository root:
         --skill-dir skills/vss-build-vision-agent \\
         --vios-skill-dir skills/vss-manage-video-io-storage \\
         --rtvi-skill-dir skills/vss-deploy-dense-captioning \\
+        --summarize-skill-dir skills/vss-summarize-video \\
         --spec skills/vss-build-vision-agent/eval/profile_in_1_streaming_dense_captions.json
 """
 from __future__ import annotations
@@ -189,6 +191,7 @@ def generate_task(
     skill_dir: Path,
     vios_skill_dir: Path | None,
     rtvi_skill_dir: Path | None,
+    summarize_skill_dir: Path | None,
 ) -> None:
     """Emit one Harbor task directory per entry in spec['expects'].
     Multi-step specs produce step-N/ subdirs; single-step specs are flat."""
@@ -202,6 +205,8 @@ def generate_task(
         build_profile = Path(spec_name).stem  # fallback to spec filename stem
 
     rendered_spec = _substitute_spec(spec, platform)
+    runtime_deploy = bool(spec.get("runtime_deploy", True))
+    judge_max_turns = int(spec.get("judge_max_turns", 60))
 
     # dataset group = spec stem (e.g. "profile_in_1_streaming_dense_captions")
     dataset_group = Path(spec_name).stem
@@ -214,10 +219,11 @@ def generate_task(
 
         # ---- instruction.md ------------------------------------------------
         # Note: spec.env notes and query are rendered ({{...}} substituted).
+        action_text = "build and deploy" if runtime_deploy else "build"
         lines = [
             PREAMBLE,
             "",
-            f"Use the `/vss-build-vision-agent` skill to build and deploy the "
+            f"Use the `/vss-build-vision-agent` skill to {action_text} the "
             f"`{build_profile}` profile on `{platform}`. "
             "Work from `$HOME/video-search-and-summarization` (the VSS repository root).",
             "",
@@ -236,10 +242,15 @@ def generate_task(
 
         # ---- task.toml -----------------------------------------------------
         step_suffix = f"-step-{idx}" if len(expects) > 1 else ""
+        task_description = (
+            f"Build+deploy {build_profile} profile"
+            if runtime_deploy
+            else f"Build {build_profile} profile"
+        )
         meta_lines = [
             "[task]",
             f'name = "nvidia-vss/vss-build-vision-agent-{dataset_group}-{platform_short}{step_suffix}"',
-            f'description = "Build+deploy {build_profile} profile ({idx}/{len(expects)}) on {platform}"',
+            f'description = "{task_description} ({idx}/{len(expects)}) on {platform}"',
             f'keywords = ["vss-build-vision-agent", "build", "{build_profile}", "{platform}"]',
             "",
             "[environment]",
@@ -252,7 +263,7 @@ def generate_task(
             # JUDGE_MAX_TURNS bumped from default 25 because the IN-1 spec carries
             # 20 checks — many requiring live service probes (ES, Kafka, VIOS,
             # RT-VLM) and trajectory-derived IDs; standard 25 turns is tight.
-            'JUDGE_MAX_TURNS = "60"',
+            f'JUDGE_MAX_TURNS = "{judge_max_turns}"',
             "",
             "[metadata]",
             'skill = "vss-build-vision-agent"',
@@ -268,8 +279,10 @@ def generate_task(
             f'brev_search = "{pspec["brev_search"]}"',
             f'min_vram_gb_per_gpu = {pspec["min_vram_per_gpu"]}',
             f'min_root_disk_gb = {pspec["min_root_disk_gb"]}',
-            # No requires_deployed_vss — the skill builds+deploys itself.
+            # No requires_deployed_vss — the skill builds itself and deploys only
+            # when the spec's runtime checks require it.
             "requires_deployed_vss = false",
+            f"runtime_deploy = {str(runtime_deploy).lower()}",
             # No prerequisite_deploy_mode — not an alerts stack trial.
             f"step_index = {idx}",
             f"step_count = {len(expects)}",
@@ -298,13 +311,13 @@ def generate_task(
         (solution_dir / "solve.sh").write_text(generate_solve_script(platform, build_profile))
 
         # ---- skills/ -------------------------------------------------------
-        # Bundle the build skill itself plus VIOS + RT-VLM skills — the agent
-        # needs all three to complete the end-to-end checks (build → deploy →
-        # VIOS upload → RT-VLM caption verification).
+        # Bundle the build skill itself plus optional peer skills the agent may
+        # need to complete end-to-end checks (build -> deploy -> service APIs).
         skills_to_copy: list[tuple[Path | None, str]] = [
             (skill_dir, "vss-build-vision-agent"),
             (vios_skill_dir, "vss-manage-video-io-storage"),
             (rtvi_skill_dir, "vss-deploy-dense-captioning"),
+            (summarize_skill_dir, "vss-summarize-video"),
         ]
         for src, name in skills_to_copy:
             if src and src.exists():
@@ -340,6 +353,10 @@ def main() -> None:
         help="Path to skills/vss-deploy-dense-captioning (bundled for RT-VLM checks)",
     )
     parser.add_argument(
+        "--summarize-skill-dir", default=None,
+        help="Path to skills/vss-summarize-video (bundled for LVS summarize API checks)",
+    )
+    parser.add_argument(
         "--spec", default=None,
         help="Path to the eval spec JSON (default: <skill-dir>/eval/profile_in_1_streaming_dense_captions.json)",
     )
@@ -358,6 +375,17 @@ def main() -> None:
     skill_dir = Path(args.skill_dir)
     vios_skill_dir = Path(args.vios_skill_dir) if args.vios_skill_dir else None
     rtvi_skill_dir = Path(args.rtvi_skill_dir) if args.rtvi_skill_dir else None
+    summarize_skill_dir = Path(args.summarize_skill_dir) if args.summarize_skill_dir else None
+    repo_root = skill_dir.resolve().parents[1]
+    if vios_skill_dir is None:
+        candidate = repo_root / "skills" / "vss-manage-video-io-storage"
+        vios_skill_dir = candidate if candidate.exists() else None
+    if rtvi_skill_dir is None:
+        candidate = repo_root / "skills" / "vss-deploy-dense-captioning"
+        rtvi_skill_dir = candidate if candidate.exists() else None
+    if summarize_skill_dir is None:
+        candidate = repo_root / "skills" / "vss-summarize-video"
+        summarize_skill_dir = candidate if candidate.exists() else None
 
     spec_path = (
         Path(args.spec)
@@ -405,7 +433,7 @@ def main() -> None:
         print(f"  GEN  vss-build-vision-agent/{dataset_group}/{task_id}")
         generate_task(
             platform, spec, output_root, skill_dir,
-            vios_skill_dir, rtvi_skill_dir,
+            vios_skill_dir, rtvi_skill_dir, summarize_skill_dir,
         )
 
     print()
