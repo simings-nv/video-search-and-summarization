@@ -46,7 +46,8 @@ timestamped events when the LVS microservice path is reachable.
 - Direct VLM fallback uses a single fixed prompt and cannot target
   scenario/events — output quality is lower than the LVS path.
 - Remote VLM endpoints generally cannot reach `localhost`/private clip URLs.
-- One backend call per request; no parallel hedging or multi-pass summaries.
+- One backend call per request; no parallel hedging, no retries after a
+  successful HTTP 200, and no multi-pass summaries.
 
 ## Troubleshooting
 
@@ -222,6 +223,11 @@ parameters. This is the ONLY supported HITL bypass; "the video is
 short" or "the user seems in a hurry" are not valid reasons.
 
 Prefer `POST /v1/summarize` (3.2 GA route); `/summarize` is a compatibility alias.
+Make exactly one `POST /v1/summarize` call for each user summarize request.
+The server log counts every POST, so do not rerun the request to pretty-print,
+debug, recover formatting, or extract additional fields after an HTTP 200.
+Save the one response body to a temporary file and parse that file for the final
+answer.
 
 ```bash
 VIDEO_SUMMARIZATION_URL=${LVS_BACKEND_URL:-http://${HOST_IP:-localhost}:38111}
@@ -230,6 +236,7 @@ VIDEO_SUMMARIZATION_URL=${LVS_BACKEND_URL:-http://${HOST_IP:-localhost}:38111}
 SCENARIO='warehouse monitoring'
 EVENTS_JSON='["notable activity"]'
 OBJECTS_JSON=''  # '' to omit, else '["forklifts","pallets","workers"]'
+RESP="$(mktemp /tmp/lvs-summarize.XXXXXX.json)"
 
 curl -s --max-time 300 -X POST "$VIDEO_SUMMARIZATION_URL/v1/summarize" \
   -H "Content-Type: application/json" \
@@ -247,8 +254,11 @@ curl -s --max-time 300 -X POST "$VIDEO_SUMMARIZATION_URL/v1/summarize" \
     use_fps_for_chunking: false,
     seed: 1
   } + (if $objects == null then {} else {objects_of_interest: $objects} end)')" \
-  | jq -r '.choices[0].message.content' \
-  | jq '{video_summary, events}'
+  > "$RESP"
+
+jq -e '.choices[0].message.content | length > 0' "$RESP" >/dev/null
+jq -r '.choices[0].message.content' "$RESP" > "${RESP%.json}.content.json"
+jq '{video_summary, events}' "${RESP%.json}.content.json"
 ```
 
 If both `video_summary` and `events` are empty, the clip probably doesn't contain the requested events — re-run with broader `scenario`/`events`, don't report "no content".
@@ -327,9 +337,10 @@ appropriate path.
 ### Presenting the output to the user
 
 Surface backend output with **minimal transformation** — do not paraphrase,
-re-voice, add emojis, or reformat. **One backend call → one rendering**: no
-parallel hedging, no duplicate headers, never call both LVS and VLM for the
-same video.
+re-voice, add emojis, summarize, shorten, or reformat in a way that drops
+content. **One backend call -> one rendering**: no parallel hedging, no
+duplicate headers, no second `/v1/summarize` call to improve the answer, and
+never call both LVS and VLM for the same video.
 
 **Header line.** Start with exactly one:
 
@@ -340,9 +351,12 @@ Summary of <video_name> (<duration>)
 `<duration>` = `Ns` for `< 60 s`, else `Mm Ss` (e.g. `3m 30s`).
 
 **LVS output:** render `video_summary` **verbatim** (polished, tone-controlled
-report — rewriting loses fidelity). Render each `events` entry with its
-`start_time`, `end_time`, `type`, and full `description` verbatim (table when
-the client renders one cleanly, otherwise a per-event list). You MAY add a
+report — rewriting loses fidelity). Render every `events` entry returned by the
+service, preserving `start_time`, `end_time`, `type`, and the full
+`description` verbatim. Prefer a per-event list with the description on its own
+line; avoid Markdown tables for LVS events because long descriptions are often
+truncated or compressed in table cells. Do not replace a long description with
+an ellipsis, summary, shortened phrase, or partial sentence. You MAY add a
 one-line header and a closing offer to re-run with different parameters.
 
 **VLM output:** render `choices[0].message.content` verbatim. If the model
@@ -370,7 +384,8 @@ mixed into it.
   `nim_nvidia_cosmos-reason2-8b_hf-1208`).
 - **Render output verbatim** — no paraphrasing, no reformatting, no rewriting
   the `video_summary` or `choices[0].message.content`.
-- **One call, one render.** No parallel hedging, no double renderings.
+- **One call, one render.** Save the one successful response to a file, parse
+  that file, and do not call `/v1/summarize` again for the same user request.
 
 ## Cross-reference
 

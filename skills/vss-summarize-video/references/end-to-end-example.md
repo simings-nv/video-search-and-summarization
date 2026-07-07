@@ -27,6 +27,7 @@ if [ "$video_sum_code" = "200" ]; then
   EVENTS_JSON='["notable activity"]'         # jq-compatible JSON array
   OBJECTS_JSON=''                            # '' to omit, else '["cars","trucks"]'
 
+  RESP="$(mktemp /tmp/lvs-summarize.XXXXXX.json)"
   curl -s --max-time 300 -X POST "$VIDEO_SUMMARIZATION_URL/v1/summarize" \
     -H "Content-Type: application/json" \
     -d "$(jq -n --arg url "$CLIP" \
@@ -43,7 +44,11 @@ if [ "$video_sum_code" = "200" ]; then
       use_fps_for_chunking: false,
       seed: 1
     } + (if $objects == null then {} else {objects_of_interest: $objects} end)')" \
-    | jq -r '.choices[0].message.content' | jq '{video_summary, events}'
+    > "$RESP"
+
+  jq -e '.choices[0].message.content | length > 0' "$RESP" >/dev/null
+  jq -r '.choices[0].message.content' "$RESP" > "${RESP%.json}.content.json"
+  jq '{video_summary, events}' "${RESP%.json}.content.json"
 else
   # ── Fallback path: VLM with the default prompt, no HITL ──
   # Prepend the Routing fallback note to the response so the user knows.
