@@ -26,12 +26,15 @@ if [ "$video_sum_code" = "200" ]; then
   SCENARIO='warehouse monitoring'            # or whatever the user gave
   EVENTS_JSON='["notable activity"]'         # jq-compatible JSON array
   OBJECTS_JSON=''                            # '' to omit, else '["cars","trucks"]'
+  LVS_MODEL="$(curl -sf --max-time 15 "$VIDEO_SUMMARIZATION_URL/models" \
+    | jq -r '.data[0].id // empty')"
+  LVS_MODEL="${LVS_MODEL:-${VLM_NAME:-nim_nvidia_cosmos-reason2-8b_hf-1208}}"
 
   RESP="$(mktemp /tmp/lvs-summarize.XXXXXX.json)"
   curl -s --max-time 300 -X POST "$VIDEO_SUMMARIZATION_URL/v1/summarize" \
     -H "Content-Type: application/json" \
     -d "$(jq -n --arg url "$CLIP" \
-          --arg model "${VLM_NAME:-nim_nvidia_cosmos-reason2-8b_hf-1208}" \
+          --arg model "$LVS_MODEL" \
           --arg scenario "$SCENARIO" \
           --argjson events "$EVENTS_JSON" \
           --argjson objects "${OBJECTS_JSON:-null}" '{
@@ -46,9 +49,10 @@ if [ "$video_sum_code" = "200" ]; then
     } + (if $objects == null then {} else {objects_of_interest: $objects} end)')" \
     > "$RESP"
 
-  jq -e '.choices[0].message.content | length > 0' "$RESP" >/dev/null
-  jq -r '.choices[0].message.content' "$RESP" > "${RESP%.json}.content.json"
+  jq -r '.choices[0].message.content | if . == null or . == "" then "{\"video_summary\":\"\",\"events\":[]}" else . end' "$RESP" > "${RESP%.json}.content.json"
   jq '{video_summary, events}' "${RESP%.json}.content.json"
+  # If the parsed fields are empty, report that LVS result and offer a future
+  # re-run. Do not issue another /v1/summarize call or direct VLM fallback.
 else
   # ── Fallback path: VLM with the default prompt, no HITL ──
   # Prepend the Routing fallback note to the response so the user knows.

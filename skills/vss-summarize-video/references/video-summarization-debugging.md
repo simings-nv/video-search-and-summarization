@@ -35,7 +35,7 @@ Common causes:
 | `/v1/ready` returns 503 | LLM, RT-VLM, ES, or another dependency is warming/unreachable. | Check dependency logs and endpoint URLs. |
 | `curl` to the video summarization service works on host but not in an agent sandbox | Network namespace or sandbox visibility differs. | Use host-visible shell/deployment context. |
 | Summarize returns 503 | The video summarization service is busy processing another file. | Wait and retry. |
-| Empty or weak event output | Scenario/events too narrow or no matching content. | Re-run with broader events or scenario. |
+| Empty or weak event output after HTTP 200 | Scenario/events too narrow or no matching content. | Report the LVS result and offer a future request with broader events or scenario; do not retry or call direct VLM in the same turn. |
 
 ## Model Id Mismatch
 

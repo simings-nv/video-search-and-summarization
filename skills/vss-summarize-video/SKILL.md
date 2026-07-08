@@ -54,7 +54,7 @@ timestamped events when the LVS microservice path is reachable.
 | Symptom | Cause | Fix |
 |---|---|---|
 | `/v1/ready` returns 503 repeatedly | LVS service still warming up | Retry up to ~30 s as shown in *Setup*; if it never returns 200 the service may not be deployed |
-| Empty `video_summary` and `events` | Clip does not contain the requested events | Re-run with broader `scenario` or different `events` |
+| Empty `video_summary` and `events` after HTTP 200 | Clip likely does not contain the requested events, or the scenario/events are too narrow | Report the empty LVS result and offer a future re-run with broader `scenario`/`events`; do not re-run or fall back in the same turn |
 | VLM returns `<think>` block | Cosmos Reason 2 reasoning mode | Strip everything up to `</think>` before rendering |
 | Empty stdout from `curl /v1/ready` | Service legitimately returns 200 with empty body | Always check HTTP status with `-o /dev/null -w '%{http_code}'`, never inspect the body |
 
@@ -141,10 +141,13 @@ other than 200 after the warmup retries, ask the user:
 
 Use env vars when set (strip trailing `/v1` from the VLM base — the skill appends it). Otherwise use the defaults. If neither works, ask the user — do not scan ports or read config files to guess.
 
-**Model name:** read `${VLM_NAME}` (default
-`nim_nvidia_cosmos-reason2-8b_hf-1208`). It must match the id RT-VLM
-`/v1/models` advertises; do not substitute the friendly
-`nvidia/cosmos-reason2-8b`.
+**Model name:** on the LVS path, discover the model id from
+`${LVS_BACKEND_URL}/models` and use the first advertised `.data[].id` for the
+single `/v1/summarize` request. If `/models` is unavailable, fall back to
+`${VLM_NAME}` (default `nim_nvidia_cosmos-reason2-8b_hf-1208`). Do not try
+alternate model names after the summarize request. On the direct VLM fallback
+path, `${VLM_NAME}` must match the id RT-VLM `/v1/models` advertises; do not
+substitute the friendly `nvidia/cosmos-reason2-8b`.
 
 For endpoint schemas, optional fields, response envelopes, and error handling, see [`references/video-summarization-api.md`](references/video-summarization-api.md).
 
@@ -225,12 +228,20 @@ short" or "the user seems in a hurry" are not valid reasons.
 Prefer `POST /v1/summarize` (3.2 GA route); `/summarize` is a compatibility alias.
 Make exactly one `POST /v1/summarize` call for each user summarize request.
 The server log counts every POST, so do not rerun the request to pretty-print,
-debug, recover formatting, or extract additional fields after an HTTP 200.
-Save the one response body to a temporary file and parse that file for the final
-answer.
+debug, recover formatting, try alternate model names or parameters, broaden
+scenario/events, or extract additional fields. Save the one response body to a
+temporary file and parse that file for the final answer. If the response is
+non-2xx, report the error; do not retry the POST with a different model or
+payload. If the HTTP 200 response contains empty `video_summary` and `events`,
+that is still the authoritative LVS result for this request: report that result
+and offer a future re-run, but do not issue another `/v1/summarize` call and do
+not call a direct VLM `/v1/chat/completions` fallback.
 
 ```bash
 VIDEO_SUMMARIZATION_URL=${LVS_BACKEND_URL:-http://${HOST_IP:-localhost}:38111}
+LVS_MODEL="$(curl -sf --max-time 15 "$VIDEO_SUMMARIZATION_URL/models" \
+  | jq -r '.data[0].id // empty')"
+LVS_MODEL="${LVS_MODEL:-${VLM_NAME:-nim_nvidia_cosmos-reason2-8b_hf-1208}}"
 
 # From HITL reply:
 SCENARIO='warehouse monitoring'
@@ -241,7 +252,7 @@ RESP="$(mktemp /tmp/lvs-summarize.XXXXXX.json)"
 curl -s --max-time 300 -X POST "$VIDEO_SUMMARIZATION_URL/v1/summarize" \
   -H "Content-Type: application/json" \
   -d "$(jq -n --arg url "<clip_url_from_vss_manage_video_io_storage>" \
-        --arg model "${VLM_NAME:-nim_nvidia_cosmos-reason2-8b_hf-1208}" \
+        --arg model "$LVS_MODEL" \
         --arg scenario "$SCENARIO" \
         --argjson events "$EVENTS_JSON" \
         --argjson objects "${OBJECTS_JSON:-null}" '{
@@ -256,12 +267,16 @@ curl -s --max-time 300 -X POST "$VIDEO_SUMMARIZATION_URL/v1/summarize" \
   } + (if $objects == null then {} else {objects_of_interest: $objects} end)')" \
   > "$RESP"
 
-jq -e '.choices[0].message.content | length > 0' "$RESP" >/dev/null
-jq -r '.choices[0].message.content' "$RESP" > "${RESP%.json}.content.json"
+jq -r '.choices[0].message.content | if . == null or . == "" then "{\"video_summary\":\"\",\"events\":[]}" else . end' "$RESP" > "${RESP%.json}.content.json"
 jq '{video_summary, events}' "${RESP%.json}.content.json"
 ```
 
-If both `video_summary` and `events` are empty, the clip probably doesn't contain the requested events — re-run with broader `scenario`/`events`, don't report "no content".
+If both `video_summary` and `events` are empty, the clip probably doesn't
+contain the requested events or the requested scenario/events are too narrow.
+Report the empty LVS result and offer to run a new request with broader
+scenario/events. Do not run that second request unless the user asks for it in a
+separate follow-up, and do not use direct VLM fallback after a successful LVS
+HTTP 200.
 
 **Tuning:** `chunk_duration` (default `10`s; `0` = single chunk),
 `num_frames_per_second_or_fixed_frames_chunk` (default `20`; meaning depends
@@ -340,7 +355,9 @@ Surface backend output with **minimal transformation** — do not paraphrase,
 re-voice, add emojis, summarize, shorten, or reformat in a way that drops
 content. **One backend call -> one rendering**: no parallel hedging, no
 duplicate headers, no second `/v1/summarize` call to improve the answer, and
-never call both LVS and VLM for the same video.
+never call both LVS and VLM for the same video. Empty LVS `video_summary` or
+`events` after HTTP 200 is not a routing failure and does not permit direct VLM
+fallback.
 
 **Header line.** Start with exactly one:
 
@@ -386,6 +403,8 @@ mixed into it.
   the `video_summary` or `choices[0].message.content`.
 - **One call, one render.** Save the one successful response to a file, parse
   that file, and do not call `/v1/summarize` again for the same user request.
+  Do not try alternate model names, broaden scenario/events, or use
+  `/v1/chat/completions` after LVS returns HTTP 200.
 
 ## Cross-reference
 
