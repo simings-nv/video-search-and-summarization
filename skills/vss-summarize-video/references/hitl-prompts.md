@@ -67,7 +67,7 @@ canonical defaults rather than guessing.
 curl -s -X POST "${LVS_BACKEND_URL:-http://localhost:38111}/v1/summarize" \
   -H "Content-Type: application/json" \
   -d '{
-    "url": "<clip_url_from_vss_manage_video_io_storage>",
+    "url": "<normalized_backend_fetchable_clip_url>",
     "model": "'"${VLM_NAME:-nim_nvidia_cosmos-reason2-8b_hf-1208}"'",
     "scenario": "<scenario>",
     "events": ["<event1>", "<event2>"],
@@ -83,9 +83,12 @@ JSON array otherwise. `num_frames_per_chunk` still exists in the OpenAPI schema
 for compatibility, but it is deprecated in 3.2.0; prefer
 `num_frames_per_second_or_fixed_frames_chunk` with `use_fps_for_chunking`.
 
-**Response shape:** OpenAI-style envelope. `choices[0].message.content` is a
-**JSON string** — parse it to get the actual summary and event list.
+**Response shape:** OpenAI-style envelope. `choices[0].message.content` is
+usually a **JSON string** — parse it to get the actual summary and event list.
+If `choices` is empty after HTTP 200, report the empty LVS result and
+diagnostics; do not retry or call direct VLM fallback.
 
 ```bash
-jq -r '.choices[0].message.content' response.json | jq '{video_summary, events}'
+jq -r 'if ((.choices // []) | length) == 0 then "{\"video_summary\":\"\",\"events\":[]}" else (.choices[0].message.content // "{\"video_summary\":\"\",\"events\":[]}") end' response.json \
+  | jq '{video_summary, events}'
 ```

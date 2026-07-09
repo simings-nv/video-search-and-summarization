@@ -129,14 +129,18 @@ curl -s -X POST "$BASE_URL/v1/summarize" \
 
 Response shape: `CompletionResponse` with top-level fields such as `id`,
 `video_id`, `choices`, `created`, `model`, `media_info`, `object`, and `usage`.
-For the VSS summarization workflow, the actual summary payload is a JSON string
-inside `choices[0].message.content`.
+For the VSS summarization workflow, the actual summary payload is usually a JSON
+string inside `choices[0].message.content`. An HTTP 200 response can still have
+`choices: []` and `total_chunks_processed: 0` when the backend could not process
+the supplied clip URL. Treat that as the terminal response for the request:
+report the empty result and diagnostics, but do not retry `/v1/summarize` with
+alternate URLs or fall back to direct VLM in the same turn.
 
 ```bash
 curl -s -X POST "$BASE_URL/v1/summarize" \
   -H "Content-Type: application/json" \
   -d @request.json \
-  | jq -r '.choices[0].message.content' \
+  | jq -r 'if ((.choices // []) | length) == 0 then "{\"video_summary\":\"\",\"events\":[]}" else (.choices[0].message.content // "{\"video_summary\":\"\",\"events\":[]}") end' \
   | jq '{video_summary, events}'
 ```
 
@@ -217,6 +221,10 @@ curl -sf "$BASE_URL/metrics" | head
 - `429` means rate limiting.
 - `503` from readiness means warming or dependencies unavailable.
 - `503` from summarize means the service is busy processing another file.
+- HTTP 200 with `choices: []` or `total_chunks_processed: 0` means no summary
+  payload was produced for that request. Common causes are a clip URL that the
+  LVS/VLM backend cannot fetch, a clip with no matching content, or
+  scenario/events that are too narrow. Do not retry automatically.
 - Treat the OpenAPI as authoritative for GA fields. Some internal sanity
   scripts exercise non-spec streaming flags on `/v1/summarize`; do not teach
   those as public GA fields unless the OpenAPI is updated.

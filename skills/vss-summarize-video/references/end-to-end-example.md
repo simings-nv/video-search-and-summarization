@@ -1,13 +1,25 @@
 ## End-to-end example
 
 Assume the `vss-manage-video-io-storage` skill has already given you
-`$CLIP` (clip URL) and `$DURATION` (seconds, for the user-facing
+`$RAW_CLIP` (raw VIOS clip URL) and `$DURATION` (seconds, for the user-facing
 header). The flow probes the video summarization service once, runs
 HITL + LVS when it is up, and falls back to the VLM with the default
 prompt only when it is not.
 
 ```bash
 VIDEO_SUMMARIZATION_URL=${LVS_BACKEND_URL:-http://${HOST_IP:-localhost}:38111}
+
+# Normalize the VIOS clip URL before it is handed to LVS/VLM. Remote-all profiles
+# need a backend-fetchable URL, not localhost/private host URLs.
+CLIP=$(printf '%s' "$RAW_CLIP" | sed 's#^http://http://#http://#')
+if [ -n "${BREV_ENV_ID:-}" ]; then
+  BREV_PREFIX="${BREV_LINK_PREFIX:-7777}"
+  BREV_ORIGIN="https://${BREV_PREFIX}-${BREV_ENV_ID}.brevlab.com"
+  CLIP=$(printf '%s' "$CLIP" \
+    | sed -E "s#^https?://(localhost|127\\.0\\.0\\.1|[0-9.]+):[0-9]+#${BREV_ORIGIN}#")
+fi
+curl -sfL --max-time 60 -o /dev/null "$CLIP" \
+  || { echo "ERROR: backend clip URL is not fetchable: $CLIP"; exit 1; }
 
 # Readiness = HTTP 200 on /v1/ready. Body may be empty — do not inspect it.
 # Retry on 503 (warmup) for up to ~30s before concluding the service is unavailable.
@@ -49,10 +61,11 @@ if [ "$video_sum_code" = "200" ]; then
     } + (if $objects == null then {} else {objects_of_interest: $objects} end)')" \
     > "$RESP"
 
-  jq -r '.choices[0].message.content | if . == null or . == "" then "{\"video_summary\":\"\",\"events\":[]}" else . end' "$RESP" > "${RESP%.json}.content.json"
+  jq -r 'if ((.choices // []) | length) == 0 then "{\"video_summary\":\"\",\"events\":[]}" else (.choices[0].message.content // "{\"video_summary\":\"\",\"events\":[]}") end' "$RESP" > "${RESP%.json}.content.json"
   jq '{video_summary, events}' "${RESP%.json}.content.json"
-  # If the parsed fields are empty, report that LVS result and offer a future
-  # re-run. Do not issue another /v1/summarize call or direct VLM fallback.
+  # If choices is empty, total_chunks_processed is 0, or parsed fields are empty,
+  # report that LVS result and diagnostics. Do not issue another /v1/summarize
+  # call or direct VLM fallback.
 else
   # ── Fallback path: VLM with the default prompt, no HITL ──
   # Prepend the Routing fallback note to the response so the user knows.

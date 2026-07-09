@@ -48,13 +48,16 @@ timestamped events when the LVS microservice path is reachable.
 - Remote VLM endpoints generally cannot reach `localhost`/private clip URLs.
 - One backend call per request; no parallel hedging, no retries after a
   successful HTTP 200, and no multi-pass summaries.
+- For remote-all profiles, the clip URL passed to LVS must be externally
+  fetchable. Raw `localhost`, private `${HOST_IP}`, or VST-internal URLs can
+  make LVS return `choices: []` / `total_chunks_processed: 0`.
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
 | `/v1/ready` returns 503 repeatedly | LVS service still warming up | Retry up to ~30 s as shown in *Setup*; if it never returns 200 the service may not be deployed |
-| Empty `video_summary` and `events` after HTTP 200 | Clip likely does not contain the requested events, or the scenario/events are too narrow | Report the empty LVS result and offer a future re-run with broader `scenario`/`events`; do not re-run or fall back in the same turn |
+| HTTP 200 with `choices: []`, `total_chunks_processed: 0`, or empty `video_summary` / `events` | Clip URL was not fetchable by the LVS/VLM backend, or the scenario/events were too narrow | Treat the response as terminal for this request. Report the LVS result and diagnostics; do not re-run or fall back in the same turn. On a future request, first fix the clip URL reachability or broaden `scenario`/`events` |
 | VLM returns `<think>` block | Cosmos Reason 2 reasoning mode | Strip everything up to `</think>` before rendering |
 | Empty stdout from `curl /v1/ready` | Service legitimately returns 200 with empty body | Always check HTTP status with `-o /dev/null -w '%{http_code}'`, never inspect the body |
 
@@ -201,6 +204,37 @@ URL as the final answer. From VIOS collect three values:
 2. **Timeline** - `{startTime, endTime}` (ISO 8601 UTC). `endTime - startTime` is the duration; needed only for the user-facing header (routing is driven solely by `/v1/ready`).
 3. **Temporary MP4 clip URL** — the `/storage/file/<streamId>/url` variant with `container=mp4`. Response field: `.videoUrl`. Both backends need an HTTP(S) URL they can `GET`.
 
+### Step 1.5 - Normalize and validate the clip URL for the LVS backend
+
+Before the single `/v1/summarize` call, normalize the VIOS `videoUrl` into a
+URL the selected backend can fetch. This is required for remote-all `lvs`
+profiles: the LVS service may be local, but the VLM it calls is remote and
+cannot fetch `localhost`, private host IPs, or container-only URLs.
+
+Use the raw VIOS URL only as an input. Do not try alternate URLs after the LVS
+POST; if this preflight cannot produce a fetchable URL, stop before
+summarization and report the URL reachability problem.
+
+```bash
+RAW_CLIP="<videoUrl_from_vss_manage_video_io_storage>"
+
+# VIOS 3.2 /url endpoints may return http://http://...
+CLIP_URL=$(printf '%s' "$RAW_CLIP" | sed 's#^http://http://#http://#')
+
+# On Brev, prefer the secure-link origin for URLs passed to remote backends.
+# BREV_LINK_PREFIX defaults to 7777 for the VSS HAProxy ingress convention.
+if [ -n "${BREV_ENV_ID:-}" ]; then
+  BREV_PREFIX="${BREV_LINK_PREFIX:-7777}"
+  BREV_ORIGIN="https://${BREV_PREFIX}-${BREV_ENV_ID}.brevlab.com"
+  CLIP_URL=$(printf '%s' "$CLIP_URL" \
+    | sed -E "s#^https?://(localhost|127\\.0\\.0\\.1|[0-9.]+):[0-9]+#${BREV_ORIGIN}#")
+fi
+
+# Validate with GET, not HEAD: VIOS can lazily materialize clips on GET.
+curl -sfL --max-time 60 -o /dev/null "$CLIP_URL" \
+  || { echo "ERROR: LVS backend clip URL is not fetchable: $CLIP_URL"; exit 1; }
+```
+
 Everything else (auth, upload, `disableAudio`, expiry, etc.) lives in the
 `vss-manage-video-io-storage` skill — refer users there if VIOS fails.
 
@@ -251,32 +285,35 @@ RESP="$(mktemp /tmp/lvs-summarize.XXXXXX.json)"
 
 curl -s --max-time 300 -X POST "$VIDEO_SUMMARIZATION_URL/v1/summarize" \
   -H "Content-Type: application/json" \
-  -d "$(jq -n --arg url "<clip_url_from_vss_manage_video_io_storage>" \
+  -d "$(jq -n --arg url "$CLIP_URL" \
         --arg model "$LVS_MODEL" \
         --arg scenario "$SCENARIO" \
         --argjson events "$EVENTS_JSON" \
         --argjson objects "${OBJECTS_JSON:-null}" '{
-    url: $url,
-    model: $model,
-    scenario: $scenario,
-    events: $events,
-    chunk_duration: 10,
-    num_frames_per_second_or_fixed_frames_chunk: 20,
-    use_fps_for_chunking: false,
-    seed: 1
-  } + (if $objects == null then {} else {objects_of_interest: $objects} end)')" \
+      url: $url,
+      model: $model,
+      scenario: $scenario,
+      events: $events,
+      chunk_duration: 10,
+      num_frames_per_second_or_fixed_frames_chunk: 20,
+      use_fps_for_chunking: false,
+      seed: 1
+    } + (if $objects == null then {} else {objects_of_interest: $objects} end)')" \
   > "$RESP"
 
-jq -r '.choices[0].message.content | if . == null or . == "" then "{\"video_summary\":\"\",\"events\":[]}" else . end' "$RESP" > "${RESP%.json}.content.json"
+jq -r 'if ((.choices // []) | length) == 0 then "{\"video_summary\":\"\",\"events\":[]}" else (.choices[0].message.content // "{\"video_summary\":\"\",\"events\":[]}") end' "$RESP" > "${RESP%.json}.content.json"
 jq '{video_summary, events}' "${RESP%.json}.content.json"
 ```
 
-If both `video_summary` and `events` are empty, the clip probably doesn't
-contain the requested events or the requested scenario/events are too narrow.
-Report the empty LVS result and offer to run a new request with broader
-scenario/events. Do not run that second request unless the user asks for it in a
-separate follow-up, and do not use direct VLM fallback after a successful LVS
-HTTP 200.
+If `choices` is empty, `total_chunks_processed` is `0`, or both
+`video_summary` and `events` are empty, the LVS service still returned the
+authoritative result for this request. The likely causes are an unfetchable clip
+URL, a clip with no matching content, or scenario/events that are too narrow.
+Report the LVS result and the relevant diagnostic fields from the saved response
+body, then offer to run a new request after fixing URL reachability or using
+broader scenario/events. Do not run that second request unless the user asks for
+it in a separate follow-up, and do not use direct VLM fallback after a successful
+LVS HTTP 200.
 
 **Tuning:** `chunk_duration` (default `10`s; `0` = single chunk),
 `num_frames_per_second_or_fixed_frames_chunk` (default `20`; meaning depends
@@ -306,7 +343,7 @@ curl -s --max-time 300 -X POST "$VLM/v1/chat/completions" \
   -d "$(jq -n \
         --arg model "${VLM_NAME:-nim_nvidia_cosmos-reason2-8b_hf-1208}" \
         --arg text "$PROMPT" \
-        --arg url "<clip_url_from_vss_manage_video_io_storage>" \
+        --arg url "$CLIP_URL" \
         '{
           model: $model,
           temperature: 0.0,
@@ -394,6 +431,11 @@ mixed into it.
   `jq`/`grep`/`head`.
 - **Delegate VIOS to `vss-manage-video-io-storage`** — it is a sub-task; the
   final answer is the Step 2 summary, not the clip URL.
+- **Normalize clip URLs before LVS.** Strip the VIOS double-`http://` bug and,
+  when `BREV_ENV_ID` is present, rewrite `localhost` / private-host clip URLs to
+  `https://${BREV_LINK_PREFIX:-7777}-${BREV_ENV_ID}.brevlab.com/...`. Validate
+  the final URL with GET before calling LVS. Never try alternate URLs after the
+  one `/v1/summarize` call.
 - **`jq` twice for LVS output.** First unwraps the OpenAI envelope, second
   parses the JSON string inside `content`.
 - **Prefer `/v1/summarize` for 3.2 GA**; `/summarize` is a compatibility alias.
@@ -405,6 +447,9 @@ mixed into it.
   that file, and do not call `/v1/summarize` again for the same user request.
   Do not try alternate model names, broaden scenario/events, or use
   `/v1/chat/completions` after LVS returns HTTP 200.
+- **`choices: []` is terminal after HTTP 200.** Do not treat it as permission to
+  retry, change URLs, or fall back to direct VLM. Report the empty LVS result and
+  diagnostics from the saved response.
 
 ## Cross-reference
 
