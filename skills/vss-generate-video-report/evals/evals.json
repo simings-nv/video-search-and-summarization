@@ -3,12 +3,12 @@
       "id": "video-report-routing-mode-a",
       "question": "Which skill should I use to generate a structured report for a recorded video clip?",
       "expected_skill": "vss-generate-video-report",
-      "ground_truth": "Loads vss-generate-video-report and explains that recorded video or sensor report requests use Mode A: /vss-manage-video-io-storage to resolve a clip URL, a VLM chat/completions call for analysis, and assets/video-analysis-report.md for the final report. It should mention that /generate is not used.",
+      "ground_truth": "Loads vss-generate-video-report and explains that recorded video or sensor report requests use Mode A: /vss-manage-video-io-storage to resolve a clip URL, a VLM chat/completions call for analysis, and references/report-templates/video-analysis-report.md for the final report. It should mention that /generate is not used.",
       "expected_behavior": [
         "Loads vss-generate-video-report.",
         "Identifies Mode A for recorded video clip reports.",
         "Mentions the clip URL plus VLM chat/completions path.",
-        "Mentions assets/video-analysis-report.md as the output template.",
+        "Mentions references/report-templates/video-analysis-report.md as the output template.",
         "States that POST /generate is not the report path."
       ]
     },
@@ -16,12 +16,12 @@
       "id": "video-report-routing-mode-b",
       "question": "Which skill should handle a report on incidents for a sensor between two timestamps?",
       "expected_skill": "vss-generate-video-report",
-      "ground_truth": "Loads vss-generate-video-report and explains that incident-range report requests use Mode B: /vss-query-analytics with video_analytics__get_incidents, then assets/incident-range-report.md for the final report. It should note that Mode B does not call the VLM and does not use POST /generate.",
+      "ground_truth": "Loads vss-generate-video-report and explains that incident-range report requests use Mode B: /vss-query-analytics with video_analytics__get_incidents, then references/report-templates/incident-range-report.md for the final report. It should note that Mode B does not call the VLM and does not use POST /generate.",
       "expected_behavior": [
         "Loads vss-generate-video-report.",
         "Identifies Mode B for incident range reports.",
         "Mentions /vss-query-analytics and video_analytics__get_incidents.",
-        "Mentions assets/incident-range-report.md as the output template.",
+        "Mentions references/report-templates/incident-range-report.md as the output template.",
         "States that Mode B does not use the VLM chat path or POST /generate."
       ]
     },
