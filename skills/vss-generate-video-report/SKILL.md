@@ -195,6 +195,14 @@ Hand off to `/vss-manage-video-io-storage` to:
 
 Bind it to `VIDEO_URL` (used by the VLM in Step 3) and set `RAW_URL="$VIDEO_URL"` before applying the report-link rewrite for Step 4.
 
+Remote VLM reachability guard (required):
+- If the selected `VLM_ENDPOINT` is remote/non-local, do not assume it can fetch `VIDEO_URL` when `VIDEO_URL` points to localhost/private VST addresses (for example `127.0.0.1`, `localhost`, `HOST_IP`, `172.16-31.x`, `192.168.x`, `10.x`, or in-cluster/internal DNS).
+- Before Step 3, explicitly warn and stop when this mismatch exists: remote VLM + internal-only `VIDEO_URL`.
+- In that case, ask the user to choose one of:
+  1. Use a local/in-cluster VLM endpoint that can reach VST internal URLs.
+  2. Switch to Mode A A2 and send local-file/base64 bytes to the remote VLM.
+  3. Expose a browser/publicly reachable clip URL and confirm the remote VLM can fetch it.
+
 #### A2 — Local file on disk or base64 video path (no VST dependency)
 
 If the user provides either:
@@ -219,11 +227,11 @@ For this path, set report `Clip URL` row to `N/A (local/base64 input)` unless a 
 
 #### Long-video rule (required)
 
-If user input video/clip duration is **greater than 120 seconds (2 mins)**, stop Mode A direct path and prompt:
+If user input video/clip duration is **120 seconds (2 mins) or longer**, stop Mode A direct path and prompt:
 - deploy and use **LVS** via `/vss-deploy-profile` + `/vss-summarize-video`,
 - then continue report templating with LVS output.
 
-Do not continue direct VLM Mode A on videos longer than 2 minutes.
+Do not continue direct VLM Mode A on videos that are 120 seconds or longer.
 
 ### Step 2 — Resolve VLM endpoint and model
 
