@@ -293,7 +293,9 @@ Never silently pick an unknown model.
 
 Use the OpenAI-compatible `chat/completions` endpoint with a `video_url` content block — the same payload shape **and multimodal settings** `video_understanding` builds in `src/vss_agents/tools/video_understanding.py` (`_build_vlm_messages` + the Cosmos `base_vlm.bind(...)` call).
 
-The frame sampling and visual-token (pixel) budget must mirror the **live** `video_understanding` settings for the active profile. **Send `mm_processor_kwargs` and `media_io_kwargs`** so the direct call uses the same frame sampling and pixel budget as the in-agent `video_understanding` tool — omitting them lets the VLM apply its own defaults, so the output diverges from the agent path.
+The frame sampling and visual-token (pixel) budget must mirror the **live** `video_understanding` settings for the active profile when `vss-agent` is running. **Send `mm_processor_kwargs` and `media_io_kwargs`** so the direct call uses the same frame sampling and pixel budget as the in-agent `video_understanding` tool — omitting them lets the VLM apply its own defaults, so the output diverges from the agent path.
+
+When `vss-agent` is absent (Mode A2 / profile-agnostic), fall back to base-profile defaults (`max_fps=2`, `max_frames=30`, `min_pixels=3136`, `max_pixels=8388608`) or explicit `VIDEO_UNDERSTANDING_*` env overrides — do not hard-fail.
 
 ```bash
 # Default prompt source of truth:
@@ -337,9 +339,11 @@ fi
   fi
 }
 
-# Multimodal settings — resolve from the live agent config file path, not hardcoded candidates.
-CFG_JSON=$(
-docker exec vss-agent python3 -c '
+# Multimodal settings — prefer live vss-agent config; fall back when container absent (Mode A2).
+CFG_JSON=""
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx vss-agent; then
+  CFG_JSON=$(
+    docker exec vss-agent python3 -c '
 import json, os, yaml
 p = os.getenv("VSS_AGENT_CONFIG_FILE")
 if not p:
@@ -355,14 +359,24 @@ print(json.dumps({
     "min_pixels": int(vu.get("min_pixels", 3136)),
     "max_pixels": int(vu.get("max_pixels", 8388608)),
 }))
-')
-)
-[ -n "${CFG_JSON}" ] || { echo "Failed to read video_understanding config from vss-agent"; exit 1; }
-printf '%s' "${CFG_JSON}" | jq -e . >/dev/null || { echo "Invalid config JSON from vss-agent"; exit 1; }
+' 2>/dev/null
+  ) || true
+fi
+
+if [ -z "${CFG_JSON}" ]; then
+  echo "WARN: vss-agent unavailable; using base-profile video_understanding defaults (override with VIDEO_UNDERSTANDING_MAX_FPS, VIDEO_UNDERSTANDING_MAX_FRAMES, VIDEO_UNDERSTANDING_MIN_PIXELS, VIDEO_UNDERSTANDING_MAX_PIXELS)" >&2
+  CFG_JSON='{"max_fps":2,"max_frames":30,"min_pixels":3136,"max_pixels":8388608}'
+fi
+
+printf '%s' "${CFG_JSON}" | jq -e . >/dev/null || { echo "Invalid video_understanding config JSON"; exit 1; }
 MAX_FPS="$(printf '%s' "${CFG_JSON}" | jq -r '.max_fps')"
 MAX_FRAMES="$(printf '%s' "${CFG_JSON}" | jq -r '.max_frames')"
 MIN_PIXELS="$(printf '%s' "${CFG_JSON}" | jq -r '.min_pixels')"
 MAX_PIXELS="$(printf '%s' "${CFG_JSON}" | jq -r '.max_pixels')"
+MAX_FPS="${VIDEO_UNDERSTANDING_MAX_FPS:-$MAX_FPS}"
+MAX_FRAMES="${VIDEO_UNDERSTANDING_MAX_FRAMES:-$MAX_FRAMES}"
+MIN_PIXELS="${VIDEO_UNDERSTANDING_MIN_PIXELS:-$MIN_PIXELS}"
+MAX_PIXELS="${VIDEO_UNDERSTANDING_MAX_PIXELS:-$MAX_PIXELS}"
 
 # num_frames = min(int(clip_seconds) * max_fps, max_frames), min 1 — matches video_understanding.py.
 # clip_seconds (Step 1 endTime-startTime) may be fractional; truncate to integer seconds — bash $((...))
@@ -403,7 +417,7 @@ curl -s --connect-timeout 5 --max-time 120 -X POST "${VLM_ENDPOINT}/chat/complet
 EOF
 ```
 
-For Mode A path A2 when using inline bytes, send `VIDEO_DATA_URL` instead of `VIDEO_URL`:
+For Mode A path A2 when using inline bytes, run the same Step 3 preamble above (prompt resolution, `CFG_JSON`, `MM_KWARGS`), then send `VIDEO_DATA_URL` instead of `VIDEO_URL`:
 
 ```bash
 curl -s --connect-timeout 5 --max-time 120 -X POST "${VLM_ENDPOINT}/chat/completions" \
@@ -421,7 +435,7 @@ curl -s --connect-timeout 5 --max-time 120 -X POST "${VLM_ENDPOINT}/chat/complet
     }
   ],
   "max_tokens": 1024,
-  "temperature": 0.0
+  "temperature": 0.0${MM_KWARGS}
 }
 EOF
 ```
