@@ -55,7 +55,7 @@
       ]
     },
     {
-      "query": "Give me a report on incidents on warehouse_safety_0001 between 2025-01-01T00:00:00.000Z and 2025-01-01T01:00:00.000Z.",
+      "query": "Give me a report on incidents on warehouse_safety_0001 between 2025-01-01T00:00:00.000Z and 2025-01-01T01:00:00.000Z.\n\nIf `video_analytics__get_incidents` initially returns zero incidents for this range, keep polling the same query (same source and time range) every 30 seconds for up to 10 minutes to allow analytics indexing to catch up. As soon as at least one incident is returned, generate the full incident-range report from those results. Do not switch modes.",
       "checks": [
         "The run initialized a VA-MCP session against http://localhost:9901/mcp (POST with method=initialize) and extracted mcp-session-id from the response header.",
         "The run issued at least one tools/call POST to http://localhost:9901/mcp with the mcp-session-id header set, calling video_analytics__get_incidents with arguments including start_time and end_time matching the user's range and source=warehouse_safety_0001 source_type=sensor.",
