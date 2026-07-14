@@ -1152,15 +1152,17 @@ function state_up() {
     local var_value="${2}"
     local mask="${3:-false}"
     local display_value="${var_value}"
+    local sed_value
+    sed_value="$(printf '%s' "${var_value}" | sed 's/[&|\\]/\\&/g')"
     if [[ "${mask}" == "true" ]]; then
       display_value="$(mask_secret "${var_value}")"
     fi
     if grep -q "^${var_name}=" "${_generated_env}"; then
       # Variable exists (uncommented), update it
-      sed -i "s|^${var_name}=.*|${var_name}=${var_value}|" "${_generated_env}"
+      sed -i "s|^${var_name}=.*|${var_name}=${sed_value}|" "${_generated_env}"
     elif grep -Eq "^#[[:space:]]*${var_name}=" "${_generated_env}"; then
       # Variable exists but is commented (with optional whitespace), uncomment and update it
-      sed -i -E "s|^#[[:space:]]*${var_name}=.*|${var_name}=${var_value}|" "${_generated_env}"
+      sed -i -E "s|^#[[:space:]]*${var_name}=.*|${var_name}=${sed_value}|" "${_generated_env}"
     else
       # Variable doesn't exist, append it
       echo "${var_name}=${var_value}" >> "${_generated_env}"
@@ -1187,22 +1189,33 @@ function state_up() {
   fi
 
   # ===== Brev secure links =====
-  # Brev secure links use a hostname of the form <port>-<env>.brevlab.com (e.g. 7777-<id>.brevlab.com)
-  # — the haproxy port is prefixed directly. Older launchables used to add a trailing "0" giving
-  # 77770-<id>.brevlab.com; that form is legacy. Point HAProxy and browser-facing compose vars at the
-  # current-form host with https/wss; keep URL templates in profile .env
-  # (${VSS_PUBLIC_HTTP_PROTOCOL}://${VSS_PUBLIC_HOST}:${VSS_PUBLIC_PORT}, etc.) so one origin is used.
-  # VST_INGRESS_ENDPOINT intentionally omits the scheme because the VST stream-processing service
-  # prepends http:// when generating /picture/url and clip URLs.
+  # Brev secure links use <prefix>-<env>.<domain>. During the phased tunnel
+  # migration, Brev-managed NetBird details identify Skybridge; a generic
+  # healthy NetBird client is insufficient. An explicit domain always wins.
   if [[ -n "${BREV_ENV_ID:-}" ]]; then
     local _proxy_port="${PROXY_PORT:-7777}"
-    echo "[INFO] Brev environment detected (${BREV_ENV_ID}). Setting HAProxy ingress to secure-link host (port ${_proxy_port}, prefix ${_proxy_port})..."
-    set_env_var "HAPROXY_PORT" '${PROXY_PORT:-7777}'
+    local _link_prefix="${BREV_LINK_PREFIX:-${_proxy_port}}"
+    local _link_domain _netbird_status=""
+    if [[ -n "${BREV_LINK_DOMAIN:-}" ]]; then
+      _link_domain="${BREV_LINK_DOMAIN}"
+    elif _netbird_status="$(netbird status -d 2>&1)" &&
+         [[ "${_netbird_status,,}" == *"skybridge"* ||
+            "${_netbird_status,,}" == *"brev.nvidia.com"* ||
+            "${_netbird_status,,}" == *"brev.dev"* ]]; then
+      _link_domain="apps.run.brev.nvidia.com"
+    else
+      _link_domain="brevlab.com"
+    fi
+    local _secure_link_host="${_link_prefix}-${BREV_ENV_ID}.${_link_domain}"
+    echo "[INFO] Brev environment detected (${BREV_ENV_ID}). Setting HAProxy ingress to ${_secure_link_host}..."
+    set_env_var "BREV_ENV_ID" "${BREV_ENV_ID}"
+    set_env_var "BREV_LINK_PREFIX" "${_link_prefix}"
+    set_env_var "BREV_LINK_DOMAIN" "${_link_domain}"
+    set_env_var "HAPROXY_PORT" "${_proxy_port}"
     set_env_var "VSS_PUBLIC_HTTP_PROTOCOL" "https"
     set_env_var "VSS_PUBLIC_WS_PROTOCOL" "wss"
-    set_env_var "VSS_PUBLIC_HOST" '${PROXY_PORT:-7777}-${BREV_ENV_ID}.brevlab.com'
+    set_env_var "VSS_PUBLIC_HOST" "${_secure_link_host}"
     set_env_var "VSS_PUBLIC_PORT" "443"
-    # set_env_var "VST_INGRESS_ENDPOINT" '${PROXY_PORT:-7777}-${BREV_ENV_ID}.brevlab.com/vst'
   fi
 
   set_env_var "NGC_CLI_API_KEY" "${ngc_cli_api_key}" "true"

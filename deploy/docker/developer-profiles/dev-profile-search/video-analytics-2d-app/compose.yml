@@ -27,7 +27,7 @@ services:
       default:
         aliases:
           - vss-behavior-analytics
-    command: python3 apps/fusion_search/main_fusion_search_analytics_app.py --config /resources/vss-search-analytics-config.json
+    command: python3 apps/search_and_alerts/main_search_and_alerts_app.py --config /resources/vss-search-analytics-config.json
     depends_on:
       broker-health-check:
         condition: service_completed_successfully
@@ -55,7 +55,7 @@ services:
       default:
         aliases:
           - vss-vios-nvstreamer
-    image: nvcr.io/nvstaging/vss-core/vss-vios-nvstreamer:${NVSTREAMER_IMAGE_TAG}
+    image: nvcr.io/nvidia/vss-core/vss-vios-nvstreamer:${NVSTREAMER_IMAGE_TAG}
     user: "0:0"
     #runtime: nvidia
     profiles: ["bp_developer_search_2d"]

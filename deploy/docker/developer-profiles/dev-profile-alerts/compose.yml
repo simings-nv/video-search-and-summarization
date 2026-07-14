@@ -27,13 +27,13 @@ services:
       default:
         aliases:
           - vss-behavior-analytics
-    command: python3 apps/dev_example/main_dev_example_app.py --config /resources/vss-behavior-analytics-config.json
+    command: python3 apps/search_and_alerts/main_search_and_alerts_app.py --config /resources/vss-behavior-analytics-config.json
     depends_on:
       broker-health-check:
         condition: service_completed_successfully
 
   nvstreamer-alerts:
-    image: nvcr.io/nvstaging/vss-core/vss-vios-nvstreamer:${NVSTREAMER_IMAGE_TAG}
+    image: nvcr.io/nvidia/vss-core/vss-vios-nvstreamer:${NVSTREAMER_IMAGE_TAG}
     user: "0:0"
     profiles: ["bp_developer_alerts_2d_cv", "bp_developer_alerts_2d_vlm"]
     entrypoint: [ "/bin/bash", "-c", "if [ \"$$NVSTREAMER_INSTALL_ADDITIONAL_PACKAGES\" = \"true\" ]; then /home/vst/vst_release/tools/user_additional_install.sh; fi && exec /home/vst/vst_release/launch_vst" ]
