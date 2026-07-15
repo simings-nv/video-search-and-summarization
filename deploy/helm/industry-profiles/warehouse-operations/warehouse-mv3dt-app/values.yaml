@@ -16,7 +16,7 @@ bp-configurator:
     seedConfigMapName: vss-behavior-analytics-resources
   image:
     repository: nvcr.io/nvidia/vss-core/vss-configurator
-    tag: "3.2.0"
+    tag: "3.2.1"
     pullPolicy: IfNotPresent
   init:
     enabled: true
@@ -318,7 +318,7 @@ rtvi:
     otelServiceName: rtvi-cv-mv3dt
     image:
       repository: nvcr.io/nvidia/vss-core/vss-rt-cv
-      tag: "3.2.0"
+      tag: "3.2.1"
       pullPolicy: IfNotPresent
     httpPort: 9000
     streamType: kafka
