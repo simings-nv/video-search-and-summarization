@@ -66,10 +66,10 @@
       ]
     },
     {
-      "query": "Insert one synthetic VLM-verified incident document into Elasticsearch index mdx-vlm-incidents with a current timestamp, end, unique Id, sensorId, category, objectIds, and info.verdict=confirmed, then refresh the index and verify video_analytics__get_incidents(max_count=1) returns it. Assume the alerts deployment is already up",
+      "query": "Insert one VLM-verified incident document into Elasticsearch index mdx-vlm-incidents, then refresh the index and verify video_analytics__get_incidents(max_count=1) returns it. Assume the alerts deployment is already up. The document MUST include ALL of these fields (VA-MCP will not return it otherwise): both Id and a lowercase id set to the SAME unique value (e.g. a UUID); timestamp (current ISO-8601 time) and end (a slightly later ISO-8601 time); sensorId; category; type (e.g. \"incident\"); objectIds (a non-empty list); and info.verdict=confirmed.",
       "checks": [
         "The run checked that Elasticsearch is reachable at http://localhost:9200.",
-        "The run inserted exactly one synthetic incident document into Elasticsearch index mdx-vlm-incidents, not just mdx-incidents.",
+        "The run inserted exactly one incident document into Elasticsearch index mdx-vlm-incidents, not just mdx-incidents.",
         "The inserted document contained at least these fields: Id, id, timestamp, end, sensorId, category, type, objectIds, info.verdict.",
         "The run initialized a VA-MCP session against http://localhost:9901/mcp with a POST method=initialize and extracted mcp-session-id from the response header.",
         "The run issued at least one tools/call POST to http://localhost:9901/mcp with the mcp-session-id header set, calling video_analytics__get_incidents with arguments including max_count=1.",
