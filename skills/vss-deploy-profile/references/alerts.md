@@ -55,7 +55,7 @@ VLM alternates: see [VLM serving paths](#vlm-serving-paths) below.
 
 ## Default GPU layout
 
-Reference defaults from `dev-profile-alerts/.env`:
+Reference defaults from `dev-profile-alerts/.env` plus the generated runtime layer initialized from `overrides.env`:
 
 ```bash
 RT_CV_DEVICE_ID=0           # perception (2d_cv only)
@@ -134,7 +134,7 @@ The skill writes these env vars to `dev-profile-alerts/generated.env` itself; th
 | RT-VLM shares GPU with LLM (`VLM_MODE=local_shared`) | DGX-SPARK, H100, RTXPRO6000BW | **0.4** |
 | RT-VLM shares GPU with LLM (`VLM_MODE=local_shared`) | RTXPRO4500BW | **0.8** |
 | RT-VLM shares GPU with LLM (`VLM_MODE=local_shared`) | OTHER | **0.7** |
-| RT-VLM on its own GPU (`VLM_MODE=local`) | L40S, RTXPRO4500BW | **0.8** (RTX 4500 also needs `RTVI_VLM_MAX_MODEL_LEN=20480` — see [§ RTX 4500](#rtx-4500-32-gb)) |
+| RT-VLM on its own GPU (`VLM_MODE=local`) | L40S, RTXPRO4500BW | **0.8** (RTX 4500 also needs `RTVI_VLM_MAX_MODEL_LEN=18000` — see [§ RTX 4500](#rtx-4500-32-gb)) |
 | RT-VLM on its own GPU (`VLM_MODE=local`) | H100, RTXPRO6000BW, OTHER | **0.7** |
 | RT-VLM on edge (`IGX-THOR` / `AGX-THOR`) | unified memory | passthrough from env (unset → empty; function skipped) |
 
@@ -174,7 +174,7 @@ HARDWARE_PROFILE=RTX4500
 LLM_MODE=remote
 VLM_MODE=local
 # RT-VLM sizing: cap context + lift utilization to fit on 32 GB.
-RTVI_VLM_MAX_MODEL_LEN=20480
+RTVI_VLM_MAX_MODEL_LEN=18000
 RTVI_VLLM_GPU_MEMORY_UTILIZATION=0.8
 # Keep the default source-backed Cosmos Reason3 Nano BF16 checkpoint.
 # VLM_NAME must match the basename rtvi-vlm advertises at /v1/models, or
@@ -190,8 +190,8 @@ On RTX 4500 the LLM is remote, so there is no local `NIM_KVCACHE_PERCENT` to set
 ### Hard rules
 
 - **L40S can't run `local_shared`.** dev-profile.sh rejects sharing the L40S device ID, so RT-VLM and the LLM can't co-locate — use `local` (RT-VLM on its own GPU @ 0.8) with the LLM remote or on another GPU.
-- **DGX-Spark / IGX-Thor / AGX-Thor — Cosmos Reason3 Nano BF16 must serve via RT-VLM, not a standalone NIM.** The alerts compose graph routes through RT-VLM only, and the source `.env` already pairs `VLM_NAME=nim_nvidia_cosmos3-nano-reasoner_bf16-final` with `RTVI_VLM_MODEL_PATH=ngc:nim/nvidia/cosmos3-nano-reasoner:bf16-final` so RT-VLM loads the checkpoint in-process. Don't introduce a remote-VLM override or a different VLM name on Thor — `VLM_AS_VERIFIER_CONFIG_FILE_PREFIX=EDGE-LOCAL-VLM-` and `RT_VLM_DEVICE_ID=0` (unified memory) are also part of the Thor shape. For the LLM side, follow `edge.md`: DGX Spark uses the standalone DGX Spark Nano 9B NIM, while AGX/IGX Thor still uses the Edge 4B fallback.
-- **Don't co-deploy a standalone Cosmos NIM with alerts.** `COMPOSE_PROFILES` for alerts has no `vlm_*_<slug>` segment by design. Verify by checking `resolved.yml` doesn't have the default standalone `cosmos3-reasoner` / `cosmos3-reasoner-shared-gpu` services, or any other standalone VLM NIM service, alongside `rtvi-vlm`.
+- **DGX-Spark / IGX-Thor / AGX-Thor — Cosmos Reason3 Nano BF16 must serve via RT-VLM, not a standalone NIM.** Thor (`AGX-THOR` / `IGX-THOR`) cannot host the standalone `cosmos3-reasoner` NIM service; the alerts compose graph routes through RT-VLM only, and the generated/runtime env already pairs `VLM_NAME=nim_nvidia_cosmos3-nano-reasoner_bf16-final` with `RTVI_VLM_MODEL_PATH=ngc:nim/nvidia/cosmos3-nano-reasoner:bf16-final` so RT-VLM loads the checkpoint in-process. Don't introduce a remote-VLM override or a different VLM name on Thor — `VLM_AS_VERIFIER_CONFIG_FILE_PREFIX=EDGE-LOCAL-VLM-` and `RT_VLM_DEVICE_ID=0` (unified memory) are also part of the Thor shape. For the LLM side, follow `edge.md`: DGX Spark uses the standalone DGX Spark Nano 9B NIM, while AGX/IGX Thor still uses the Edge 4B fallback.
+- **Don't co-deploy a standalone Cosmos NIM with alerts.** `COMPOSE_PROFILES` for alerts has no `vlm_*_<slug>` segment by design. Verify by checking `resolved.yml` doesn't have `cosmos3-reasoner` / `cosmos3-reasoner-shared-gpu` services alongside `rtvi-vlm`.
 - **`VLM_NAME` mismatch ⇒ HTTP 400.** dev-profile.sh sets `VLM_NAME=nim_nvidia_cosmos3-nano-reasoner_bf16-final` for the default Cosmos3 Nano BF16 path. If you change `RTVI_VLM_MODEL_PATH` you must update `VLM_NAME` to match the new model basename — otherwise alert-bridge / agent get "No such model" from `/v1/models`.
 - **`VLM_NAME_SLUG=none` is required.** The alerts compose graph has no `vlm_local_*_<slug>` profiles. Setting a real slug doesn't bring up a VLM service — it just makes the COMPOSE_PROFILES reference dead.
 - **`/v1` suffix mismatch.** `VLM_BASE_URL` no `/v1`; `RTVI_VLM_ENDPOINT` yes `/v1`. dev-profile.sh writes them consistently in remote mode; if you edit by hand, mirror that.
@@ -264,7 +264,7 @@ deploy/docker/developer-profiles/dev-profile-alerts/generated.env
 
 ## Stage perception models (RTDETR-ITS + GDINO)
 
-**MUST run before `docker compose --env-file <env> -f resolved.yml up -d` for verification mode (`MODE=2d_cv`).** The alerts compose has no init container that downloads the perception detector models — `dev-profile.sh` stages them via NGC CLI, and since this skill doesn't run that script, the agent stages them directly.
+**MUST run before `docker compose --env-file <stable-env> --env-file <generated-env> -f resolved.yml up -d` for verification mode (`MODE=2d_cv`).** The alerts compose has no init container that downloads the perception detector models — `dev-profile.sh` stages them via NGC CLI, and since this skill doesn't run that script, the agent stages them directly.
 
 Real-time mode (`MODE=2d_vlm`) doesn't deploy RT-CV and skips this entirely.
 

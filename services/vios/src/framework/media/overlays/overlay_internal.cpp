@@ -21,7 +21,7 @@
 #include "network_utils.h"
 #include "nvhwdetection.h"
 #include "cudaLoader.h"
-#if defined(AARCH64_PLATFORM) || defined(JETSON_PLATFORM)
+#if defined(AARCH64_PLATFORM)
 #include "utils.h"
 #endif
 #include "nvbufsurface.h"
@@ -2174,7 +2174,7 @@ void NvLLOverlayInternal::readTripwire()
         std::map<string, Tripwire>::iterator it;
         Point p;
 
-#if defined(AARCH64_PLATFORM) || defined(JETSON_PLATFORM)
+#if defined(AARCH64_PLATFORM)
         Resolution resolution;
         resolution = GET_CONFIG().webrtc_out_default_resolution;
         if (!resolution.empty() || NvHwDetection::getInstance()->m_useNvV4l2Enc == false)
@@ -2471,7 +2471,7 @@ void NvLLOverlayInternal::readRoi()
         std::map<string, Roi>::iterator it;
         Point p;
 
-#if defined(AARCH64_PLATFORM) || defined(JETSON_PLATFORM)
+#if defined(AARCH64_PLATFORM)
         Resolution resolution;
         resolution = GET_CONFIG().webrtc_out_default_resolution;
         if (!resolution.empty() || NvHwDetection::getInstance()->m_useNvV4l2Enc == false)
@@ -3430,7 +3430,7 @@ bool NvLLOverlayInternal::processOsdSinkPadBufferProbe (void* buffer, GstMetaUni
         LOG(info) << "Could not get libs" << endl;
         return false;
     }
-#if !defined(AARCH64_PLATFORM) && !defined(JETSON_PLATFORM)
+#if !defined(AARCH64_PLATFORM)
     // Running in CPU mode
     if (GET_CONFIG().use_software_path || g_isGpuPresent == false)
     {
@@ -3866,7 +3866,7 @@ bool NvLLOverlayInternal::processOsdSinkPadBufferProbeStreamer (void* buffer, Gs
         LOG(info) << "Could not get libs" << endl;
         return false;
     }
-#if !defined(AARCH64_PLATFORM) && !defined(JETSON_PLATFORM)
+#if !defined(AARCH64_PLATFORM)
     // Running in CPU mode
     if (GET_CONFIG().use_software_path || g_isGpuPresent == false)
     {
@@ -4113,7 +4113,7 @@ NvOsdLibs::NvOsdLibs()
     , error(false)
 {
     const char* lib_path;
-#if defined(AARCH64_PLATFORM) || defined(JETSON_PLATFORM)
+#if defined(AARCH64_PLATFORM)
     lib_path = CONCATENATE_STRINGS(ABSOLUTE_PREBUILT_LIBRARY_PATH_ARCH64, "libllosd.so");
     handle_nvCuLib = dlopen(lib_path, RTLD_LAZY);
     if (!handle_nvCuLib)
@@ -4146,7 +4146,7 @@ NvOsdLibs::NvOsdLibs()
         osd_global_destroy = (osd_global_destroy_t) dlsym (handle_nvCuLib, "osd_global_destroy");
         DL_ERROR_EXIT
     }
-#if defined(AARCH64_PLATFORM) || defined(JETSON_PLATFORM)
+#if defined(AARCH64_PLATFORM)
     lib_path = CONCATENATE_STRINGS(ABSOLUTE_PREBUILT_LIBRARY_PATH_ARCH64, "libgstcuosdmeta.so");
     handle_nvCuosdmetaLib = dlopen(lib_path, RTLD_LAZY);
     if (!handle_nvCuosdmetaLib)
@@ -4275,7 +4275,7 @@ void NvLLOverlayInternal::enableOverlay(OverlayParams& params, bool use_frameid,
     }
     if (GET_CONFIG().enable_gem_drawing)
     {
-#if defined(AARCH64_PLATFORM) || defined(JETSON_PLATFORM)
+#if defined(AARCH64_PLATFORM)
         m_enableTripwire = params.m_bboxParams.m_enableTripwire;
         m_enableRoi = params.m_bboxParams.m_enableROI;
         if (m_enableTripwire && !m_readTripwireThread.joinable())
@@ -4351,7 +4351,7 @@ NvLLOverlayInternal::NvLLOverlayInternal(OverlayParams& params,
 
 NvLLOverlayInternal::~NvLLOverlayInternal()
 {
-#if !defined(AARCH64_PLATFORM) && !defined(JETSON_PLATFORM)
+#if !defined(AARCH64_PLATFORM)
     m_metaWait.signal();
 #endif
     if (GET_CONFIG().enable_gem_drawing)
@@ -4443,7 +4443,7 @@ NvLLOverlayInternal::~NvLLOverlayInternal()
         GET_OSD_INSTANCE()->osd_destroy((OsdContext_t)osd_ctx);
         osd_ctx = nullptr;
     }
-#if !defined(AARCH64_PLATFORM) && !defined(JETSON_PLATFORM)
+#if !defined(AARCH64_PLATFORM)
     if (m_cpuCtx)
     {
         delete m_cpuCtx;
@@ -4460,7 +4460,7 @@ bool NvLLOverlayInternal::isOverlayEnabled()
 {
     bool is_overlay = m_enableBbox || m_enableTripwire || m_enableRoi
                      || m_enableSensorNameText || m_enablePose || m_enableHalos;
-#if defined(AARCH64_PLATFORM) || defined(JETSON_PLATFORM)
+#if defined(AARCH64_PLATFORM)
     bool is_sw_mode = GET_CONFIG().use_software_path || g_isGpuPresent == false;
     return !is_sw_mode && is_overlay;
 #else
@@ -4518,8 +4518,9 @@ GstElement* NvLLOverlayInternal::create()
     overlay_bin = gst_bin_new ("nvoverlay");
     bool isLive = false;
     GstElement* latency_queue = nullptr;
-#if !defined(AARCH64_PLATFORM) && !defined(JETSON_PLATFORM)
-    GstElement *converter2 = nullptr, *filter2 = nullptr, *converter1 = nullptr, *filter1 = nullptr;
+    GstElement *converter2 = nullptr, *filter2 = nullptr;
+#if !defined(AARCH64_PLATFORM)
+    GstElement *converter1 = nullptr, *filter1 = nullptr;
 #endif
     SearchParams inData = m_bboxParams.m_searchParams;
     if (inData.m_start_time.empty())
@@ -4536,7 +4537,7 @@ GstElement* NvLLOverlayInternal::create()
         g_object_set (G_OBJECT (latency_queue), "max-size-buffers", 0, "max-size-time", 0, "max-size-bytes", 0, "min-threshold-time", 100000000, nullptr);
     }
 #ifdef USE_CUOSD
-#if defined(AARCH64_PLATFORM) || defined(JETSON_PLATFORM)
+#if defined(AARCH64_PLATFORM)
     GstRegistry *registry;
     registry = gst_registry_get();
     gst_registry_scan_path(registry, "prebuilts/aarch64/gst-plugins");
@@ -4545,7 +4546,7 @@ GstElement* NvLLOverlayInternal::create()
 #endif
     m_filter    = gst_element_factory_make ("capsfilter", nullptr);
 
-#if !defined(AARCH64_PLATFORM) && !defined(JETSON_PLATFORM)
+#if !defined(AARCH64_PLATFORM)
     /* SW path creates overlay_bin as follows :
      * videoconvert ! video/x-raw, format=RGBA ! cuosd ! video/x-raw, format=RGBA ! videoconvert ! video/x-raw, format=I420
      */
@@ -4563,7 +4564,18 @@ GstElement* NvLLOverlayInternal::create()
      */
     else if (false == NvHwDetection::getInstance()->m_useNvV4l2Enc)
     {
+#else
+    /* Jetson iGPU without NVENC (e.g. Orin Nano) uses HW Dec + SW Enc. The SW
+     * encoder needs system-memory raw video, but the Tegra overlay emits NVMM,
+     * so append nvvideoconvert/nvvidconv -> system I420 inside the overlay bin.
+     */
+    if (false == NvHwDetection::getInstance()->m_useNvV4l2Enc)
+    {
+#endif
         converter2 = gst_element_factory_make ("nvvideoconvert", nullptr);
+#if defined(AARCH64_PLATFORM)
+        if (!converter2) converter2 = gst_element_factory_make ("nvvidconv", nullptr);
+#endif
         filter2 = gst_element_factory_make ("capsfilter", nullptr);
 
         if (!converter2 || !filter2)
@@ -4579,7 +4591,6 @@ GstElement* NvLLOverlayInternal::create()
         }
         gst_bin_add_many (GST_BIN (overlay_bin), converter2, filter2, nullptr);
     }
-#endif
 
     if (!overlay_bin || !m_nvosd || !m_filter )
     {
@@ -4589,7 +4600,7 @@ GstElement* NvLLOverlayInternal::create()
     gst_bin_add_many (GST_BIN (overlay_bin), m_nvosd, m_filter, nullptr);
 
 #ifdef USE_CUOSD
-#if !defined(AARCH64_PLATFORM) && !defined(JETSON_PLATFORM)
+#if !defined(AARCH64_PLATFORM)
     if (GET_CONFIG().use_software_path || g_isGpuPresent == false)
     {
         g_object_set (G_OBJECT (m_nvosd), "enable-cpu-mode" , true, nullptr);
@@ -4608,8 +4619,19 @@ GstElement* NvLLOverlayInternal::create()
     }
 #endif
 
-#if defined(AARCH64_PLATFORM) || defined(JETSON_PLATFORM)
-    source_pad = gst_element_get_static_pad (m_filter, "src");
+#if defined(AARCH64_PLATFORM)
+    if (false == NvHwDetection::getInstance()->m_useNvV4l2Enc)
+    {
+        if (!gst_element_link_many (m_filter, converter2, filter2, nullptr))
+        {
+            LOG (error) << "After Converter Elements could not be linked" << endl;
+        }
+        source_pad = gst_element_get_static_pad (filter2, "src");
+    }
+    else
+    {
+        source_pad = gst_element_get_static_pad (m_filter, "src");
+    }
 #else
     if (GET_CONFIG().use_software_path || g_isGpuPresent == false)
     {
@@ -4652,7 +4674,7 @@ GstElement* NvLLOverlayInternal::create()
 #ifdef USE_CUOSD
     if(isLive)
     {
-#if defined(AARCH64_PLATFORM) || defined(JETSON_PLATFORM)
+#if defined(AARCH64_PLATFORM)
         if (!gst_element_link (latency_queue, m_nvosd))
         {
             LOG (error) << "Queue Element could not be linked" << endl;
@@ -4680,7 +4702,7 @@ GstElement* NvLLOverlayInternal::create()
     }
     else
     {
-#if defined(AARCH64_PLATFORM) || defined(JETSON_PLATFORM)
+#if defined(AARCH64_PLATFORM)
         sink_pad = gst_element_get_static_pad (m_nvosd, "sink");
 #else
         if (GET_CONFIG().use_software_path || g_isGpuPresent == false)
@@ -4708,7 +4730,7 @@ GstElement* NvLLOverlayInternal::create()
     }
 
     GstCaps *caps_filter  = nullptr;
-#if defined(AARCH64_PLATFORM) || defined(JETSON_PLATFORM)
+#if defined(AARCH64_PLATFORM)
     caps_filter = gst_caps_from_string ("video/x-raw(memory:NVMM),format=NV12");
 #else
     if (GET_CONFIG().use_software_path || g_isGpuPresent == false)
@@ -4722,7 +4744,7 @@ GstElement* NvLLOverlayInternal::create()
 #endif
     g_object_set (G_OBJECT (m_filter), "caps", caps_filter, nullptr);
     gst_caps_unref (caps_filter);
-#if !defined(AARCH64_PLATFORM) && !defined(JETSON_PLATFORM)
+#if !defined(AARCH64_PLATFORM)
     if (GET_CONFIG().use_software_path || g_isGpuPresent == false)
     {
         GstCaps *caps_filter1  = nullptr;
@@ -4738,6 +4760,13 @@ GstElement* NvLLOverlayInternal::create()
     {
         GstCaps *caps_filter2  = nullptr;
         caps_filter2 = gst_caps_from_string ("video/x-raw,format=I420");
+        g_object_set (G_OBJECT (filter2), "caps", caps_filter2, nullptr);
+        gst_caps_unref (caps_filter2);
+    }
+#else
+    if (false == NvHwDetection::getInstance()->m_useNvV4l2Enc)
+    {
+        GstCaps *caps_filter2 = gst_caps_from_string ("video/x-raw,format=I420");
         g_object_set (G_OBJECT (filter2), "caps", caps_filter2, nullptr);
         gst_caps_unref (caps_filter2);
     }
