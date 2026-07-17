@@ -16,7 +16,7 @@
 global:
   # Bare node IP, or full main hostname (e.g. vss-search.<ip>.nip.io) for install --set global.externalHost=…
   externalHost: ''
-  # Search: critic behavior in vss-agent configs (vss-agent / search config.yml). Cosmos NIM is toggled with nims.cosmos.enabled — keep the same boolean (defaults below match true).
+  # Search: critic behavior in vss-agent configs (vss-agent / search config.yml). Cosmos NIM is toggled with nims.cosmos3.enabled — keep the same boolean (defaults below match true).
   enableCritic: true
   ngcApiKey: ''
   imagePullPolicy: IfNotPresent
@@ -217,7 +217,9 @@ rtvi:
     replicas: 1
     image:
       repository: nvcr.io/nvidia/vss-core/vss-rt-cv
-      tag: 3.2.0
+      # For multi-arch: 3.2.1
+      # For DGX-SPARK (SBSA): 3.2.1-sbsa
+      tag: 3.2.1
       pullPolicy: IfNotPresent
     httpPort: 9000
     streamType: kafka
@@ -289,7 +291,7 @@ rtvi:
     replicas: 1
     image:
       repository: nvcr.io/nvidia/vss-core/vss-rt-embed
-      tag: "3.2.0"
+      tag: "3.2.1"
       pullPolicy: IfNotPresent
     port: 8000
     service:
@@ -367,7 +369,7 @@ rtvi:
       - key: nvidia.com/gpu
         operator: Exists
         effect: NoSchedule
-# Analytics umbrella: Search uses fusion_search behavior analytics + video-analytics-api (REST API for raw/analytics data).
+# Analytics umbrella: Search uses search_and_alerts behavior analytics (incident generation disabled) + video-analytics-api (REST API for raw/analytics data).
 analytics:
   enabled: true
   vss-video-analytics-api:
@@ -387,7 +389,7 @@ analytics:
       type: ClusterIP
     command:
       - python3
-      - apps/fusion_search/main_fusion_search_analytics_app.py
+      - apps/search_and_alerts/main_search_and_alerts_app.py
       - --config
       - /resources/vss-behavior-analytics-config.json
     config:
@@ -434,6 +436,7 @@ analytics:
             {"name": "sinkType", "value": "kafka"},
             {"name": "numWorkersForBehaviorCreation", "value": "2"},
             {"name": "numWorkersForEmbedFiltering", "value": "1"},
+            {"name": "numWorkersForIncidentGeneration", "value": "0"},
             {"name": "inSimulationMode", "value": "true"},
             {"name": "stateManagementFilter", "value": "[\"Person\"]"}
           ]
@@ -461,7 +464,7 @@ agent:
     replicas: 1
     rtviEmbedModelName: cosmos-embed1-448p-anomaly-detection
     llmName: nvidia/nvidia-nemotron-nano-9b-v2
-    vlmName: nvidia/cosmos-reason2-8b
+    vlmName: nvidia/cosmos3-nano-reasoner
     llmBaseUrl: ''
     vlmBaseUrl: ''
     evalLlmJudgeName: nvidia/nvidia-nemotron-nano-9b-v2
@@ -482,7 +485,7 @@ agent:
     videoAnalysisMcpUrl: ''
     template:
       name: ''
-    vssAgentVersion: 3.2.0
+    vssAgentVersion: 3.3.0-65576357eb80
     # Copied from rtvi.* defaults (vss-agent subchart env tpl only sees agent.vss-agent; keep in sync with rtvi.vss-rtvi-embed.port / vss-rtvi-cv.httpPort).
     rtviEmbedPort: '8000'
     rtviCvPort: '9000'
@@ -566,7 +569,7 @@ agent:
       - name: LLM_BASE_URL
         value: '{{- $g := .Values.global | default dict }}{{- $llm := default "" (coalesce (.Values.llmBaseUrl | default "") ((index $g "llmBaseUrl") | default "")) | toString | trim }}{{- $pfx := default false (coalesce .Values.useReleaseNamePrefix ((index $g "useReleaseNamePrefix") | default false)) }}{{- $def := ternary (printf "http://%s-nvidia-nemotron-nano-9b-v2:8000" .Release.Name) "http://nvidia-nemotron-nano-9b-v2:8000" $pfx }}{{- if $llm }}{{ $llm }}{{- else }}{{ $def }}{{- end }}'
       - name: VLM_BASE_URL
-        value: '{{- $g := .Values.global | default dict }}{{- $vlm := default "" (coalesce (.Values.vlmBaseUrl | default "") ((index $g "vlmBaseUrl") | default "")) | toString | trim }}{{- $pfx := default false (coalesce .Values.useReleaseNamePrefix ((index $g "useReleaseNamePrefix") | default false)) }}{{- $def := ternary (printf "http://%s-nvidia-cosmos-reason2-8b:8000" .Release.Name) "http://nvidia-cosmos-reason2-8b:8000" $pfx }}{{- if $vlm }}{{ $vlm }}{{- else }}{{ $def }}{{- end }}'
+        value: '{{- $g := .Values.global | default dict }}{{- $vlm := default "" (coalesce (.Values.vlmBaseUrl | default "") ((index $g "vlmBaseUrl") | default "")) | toString | trim }}{{- $pfx := default false (coalesce .Values.useReleaseNamePrefix ((index $g "useReleaseNamePrefix") | default false)) }}{{- $def := ternary (printf "http://%s-nvidia-cosmos3-reasoner:8000" .Release.Name) "http://nvidia-cosmos3-reasoner:8000" $pfx }}{{- if $vlm }}{{ $vlm }}{{- else }}{{ $def }}{{- end }}'
       - name: VST_EXTERNAL_URL
         value: '{{- $g := .Values.global | default dict }}{{- $eh := index $g "externalHost" | default "" | trim }}{{- $ipRaw := index $g "externalHost" | default "127.0.0.1" | trim }}{{- $ip := $ipRaw }}{{- if and (hasPrefix "vss-search." $ipRaw) (hasSuffix "nip.io" $ipRaw) }}{{- $ip = $ipRaw | trimPrefix "vss-search." | trimSuffix ".nip.io" }}{{- end }}{{- $mainHostDef := printf "vss-search.%s.nip.io" $ip }}{{- $mainHost := .Values.vstPublicIngressHost | default $mainHostDef | trim }}{{- $useNip := default true .Values.vstPublicBaseUseNipIo }}{{- $nipBase := ternary (printf "http://%s" $mainHost) "" (and $useNip (ne $mainHost "")) }}{{- $es := index $g "externalScheme" | default "http" }}{{- $ep := index $g "externalPort" | default "" | trim }}{{- $globalBase := ternary (ternary (printf "%s://%s:%s" $es $eh $ep) (printf "%s://%s" $es $eh) (ne $ep "")) "" (ne $eh "") }}{{- $pfx := default false (coalesce .Values.useReleaseNamePrefix ((index $g "useReleaseNamePrefix") | default false)) }}{{- $vssAgentHttp := ternary (printf "http://%s-vss-agent:8000" .Release.Name) "http://vss-agent:8000" $pfx }}{{- $vstPubExplicit := coalesce .Values.vssAgentExternalUrl .Values.vstExternalUrl }}{{ if $vstPubExplicit }}{{ $vstPubExplicit }}{{ else if and $useNip (ne $nipBase "") }}{{ $nipBase }}{{ else }}{{ coalesce $globalBase $vssAgentHttp }}{{ end }}'
       - name: VST_INTERNAL_URL
@@ -574,7 +577,7 @@ agent:
       - name: LLM_NAME
         value: '{{- $g := .Values.global | default dict }}{{ trim (coalesce .Values.llmName ((index $g "llmName") | default "") "nvidia/nvidia-nemotron-nano-9b-v2") }}'
       - name: VLM_NAME
-        value: '{{- $g := .Values.global | default dict }}{{ trim (coalesce .Values.vlmName ((index $g "vlmName") | default "") "nvidia/cosmos-reason2-8b") }}'
+        value: '{{- $g := .Values.global | default dict }}{{ trim (coalesce .Values.vlmName ((index $g "vlmName") | default "") "nvidia/cosmos3-nano-reasoner") }}'
       - name: EVAL_LLM_JUDGE_NAME
         value: '{{- $g := .Values.global | default dict }}{{- $ln := trim (coalesce .Values.llmName ((index $g "llmName") | default "") "nvidia/nvidia-nemotron-nano-9b-v2") }}{{ coalesce .Values.evalLlmJudgeName $ln }}'
       - name: EVAL_LLM_JUDGE_BASE_URL
@@ -590,7 +593,7 @@ agent:
       - name: RTVI_EMBED_MODEL
         value: '{{ .Values.rtviEmbedModelName | default "cosmos-embed1-448p-anomaly-detection" }}'
       - name: VSS_AGENT_VERSION
-        value: '{{ .Values.vssAgentVersion | default "3.2.0" }}'
+        value: '{{ .Values.vssAgentVersion | default "3.3.0-65576357eb80" }}'
 
 vss-agent-ui:
   enabled: true
@@ -600,8 +603,8 @@ vss-agent-ui:
     externalHost: ''
     imagePullPolicy: IfNotPresent
   image:
-    repository: nvcr.io/nvidia/vss-core/vss-agent-ui
-    tag: "3.2.0"
+    repository: nvcr.io/nvstaging/vss-core/vss-agent-ui
+    tag: "3.2.1-26.07.1-dd945777eef9"
   replicas: 1
   fillAlertBridgeUrlFromGlobal: false
   agentApiUrlBase: ''
@@ -727,6 +730,13 @@ vss-agent-ui:
 nims:
   enabled: true
   gpuType: H100
+  # Cap cosmos3 at 0.75 of the VLM GPU (device 1, co-hosted with other GPU
+  # services in this profile) — overrides the umbrella H100 profile's 0.9.
+  # Merged per-key into the rendered <cosmos3-fullname>-nim-env ConfigMap.
+  gpuProfiles:
+    H100:
+      cosmos3:
+        NIM_GPU_MEMORY_UTILIZATION: '0.75'
   global:
     # Must differ from chart root docker pull Secret name (`global.imagePullSecrets` → ngc-docker-reg-secret from templates/secrets.yaml).
     # Reusing ngc-docker-reg-secret here duplicates the same Secret in the nims subchart and breaks installs/upgrades (Helm SSA / original object errors).
@@ -759,13 +769,17 @@ nims:
         effect: NoSchedule
     env:
       CUDA_VISIBLE_DEVICES: '0'
-  cosmos:
+  cosmos3:
     enabled: true
     image:
-      repository: nvcr.io/nim/nvidia/cosmos-reason2-8b
-      tag: 1.6.0
+      repository: nvcr.io/nim/nvidia/cosmos3-reasoner
+      tag: '1.7'
       pullPolicy: IfNotPresent
     replicas: 1
+    nimModelSize: 'nano'
+    # Empty so the NIM uses its built-in manifest; BF16 pinned via nimModelProfile.
+    nimModelName: ''
+    nimModelProfile: 'e55fdb44f41441032f546360d0dcf61caa8b39fa2852d31124c03953d01e1cb3'
     resources:
       limits:
         nvidia.com/gpu: '1'
@@ -775,6 +789,7 @@ nims:
       pvc:
         storageClass: ''
         size: 200Gi
+      sharedMemorySizeLimit: 32Gi
     service:
       type: ClusterIP
       port: 8000
@@ -783,8 +798,8 @@ nims:
       - key: nvidia.com/gpu
         operator: Exists
         effect: NoSchedule
+    # The cosmos3-reasoner subchart does not consume this env map — runtime env
+    # comes from the gpuProfiles.<gpuType>.cosmos3 ConfigMap (see the
+    # nims.gpuProfiles.H100.cosmos3 override above).
     env:
       CUDA_VISIBLE_DEVICES: '1'
-      NIM_KVCACHE_PERCENT: '0.75'
-      NIM_MAX_MODEL_LEN: '16384'
-      NIM_LOW_MEMORY_MODE: 'true'

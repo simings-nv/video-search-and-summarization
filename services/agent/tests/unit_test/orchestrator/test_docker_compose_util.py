@@ -21,6 +21,7 @@ import pytest
 import yaml
 
 from vss_agents.orchestrator import docker_compose_util as dcu
+from vss_agents.orchestrator import network_util
 
 
 def _env_text(*lines: str) -> str:
@@ -402,6 +403,7 @@ class TestBuildResolvedEnv:
                 "HOST_IP=<HOST_IP>",
                 "VSS_APPS_DIR=/path/to/deploy/docker",
                 "COMPOSE_PROFILES=${BP_PROFILE}_${MODE},llm_${LLM_MODE}_${LLM_NAME_SLUG},vlm_${VLM_MODE}_${VLM_NAME_SLUG}",
+                "BREV_LINK_DOMAIN=brevlab.com",
                 "NGC_CLI_API_KEY=",  # pragma: allowlist secret
                 "NVIDIA_API_KEY=",  # pragma: allowlist secret
             ),
@@ -411,17 +413,17 @@ class TestBuildResolvedEnv:
             nvidia_api_key="nvidia-from-config",  # pragma: allowlist secret
         )
 
-        brev_calls: list[tuple[str, str]] = []
+        brev_calls: list[tuple[str, str, str, str]] = []
         monkeypatch.delenv("BREV_ENV_ID", raising=False)
         monkeypatch.delenv("VSS_DISABLE_BREV_PROXY_ENV", raising=False)
         monkeypatch.setattr(dcu, "detect_internal_ip", lambda: pytest.fail("HOST_IP override should win"))
         monkeypatch.setattr(dcu, "detect_external_ip", lambda: "44.55.66.77")
         monkeypatch.setattr(dcu, "read_etc_environment", lambda: {"BREV_ENV_ID": "brev-from-etc"})
-        monkeypatch.setattr(
-            dcu,
-            "apply_brev_proxy_env",
-            lambda merged, brev_env_id: brev_calls.append((merged["HOST_IP"], brev_env_id)),
-        )
+
+        def capture_brev_proxy_env(merged: dict[str, str], brev_env_id: str, *, explicit_link_domain: str = "") -> None:
+            brev_calls.append((merged["HOST_IP"], brev_env_id, merged["BREV_LINK_DOMAIN"], explicit_link_domain))
+
+        monkeypatch.setattr(dcu, "apply_brev_proxy_env", capture_brev_proxy_env)
 
         resolved = dcu.build_resolved_env(recipe)
 
@@ -440,7 +442,47 @@ class TestBuildResolvedEnv:
         assert resolved["VLM_DEVICE_ID"] == "1"
         assert "SHARED_LLM_VLM_DEVICE_ID" not in resolved
         assert resolved["COMPOSE_PROFILES"] == "search_local,llm_local_llm-a-slug,vlm_local_vlm-a-slug"
-        assert brev_calls == [("10.0.0.5", "brev-from-etc")]
+        assert brev_calls == [("10.0.0.5", "brev-from-etc", "brevlab.com", "")]
+
+    def test_build_resolved_env_forwards_link_domain_override_as_explicit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        recipe = _make_recipe(
+            tmp_path,
+            _env_text(
+                "MODE=local",
+                "BP_PROFILE=search",
+                "HARDWARE_PROFILE=igx",
+                "LLM_MODE=local_shared",
+                "LLM_NAME_SLUG=llm-slug",
+                "VLM_MODE=local_shared",
+                "VLM_NAME_SLUG=vlm-slug",
+                "HOST_IP=<HOST_IP>",
+                "BREV_LINK_DOMAIN=brevlab.com",
+            ),
+            profile=dcu.PROFILE_SEARCH,
+            env_overrides={
+                "HOST_IP": "10.0.0.5",
+                "BREV_LINK_DOMAIN": "override.example.com",
+            },
+        )
+
+        monkeypatch.delenv("BREV_ENV_ID", raising=False)
+        monkeypatch.delenv("BREV_LINK_DOMAIN", raising=False)
+        monkeypatch.delenv("VSS_DISABLE_BREV_PROXY_ENV", raising=False)
+        monkeypatch.setattr(dcu, "detect_internal_ip", lambda: pytest.fail("HOST_IP override should win"))
+        monkeypatch.setattr(dcu, "detect_external_ip", lambda: "44.55.66.77")
+        monkeypatch.setattr(dcu, "read_etc_environment", lambda: {"BREV_ENV_ID": "brev-from-etc"})
+        monkeypatch.setattr(
+            network_util.subprocess,
+            "run",
+            lambda *_args, **_kwargs: pytest.fail("an explicit link domain must skip NetBird detection"),
+        )
+
+        resolved = dcu.build_resolved_env(recipe)
+
+        assert resolved["BREV_LINK_DOMAIN"] == "override.example.com"
+        assert resolved["VST_EXTERNAL_URL"] == "https://7777-brev-from-etc.override.example.com"
 
     def test_build_resolved_env_can_disable_brev_proxy_env(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -634,11 +676,11 @@ class TestBuildResolvedEnv:
                 "LLM_NAME=llm-a",
                 "LLM_NAME_SLUG=llm-a-slug",
                 "VLM_MODE=local",
-                "VLM_NAME=nim_nvidia_cosmos-reason2-8b_hf-1208",
+                "VLM_NAME=nim_nvidia_cosmos3-nano-reasoner_bf16-final",
                 "VLM_NAME_SLUG=none",
                 "HOST_IP=10.0.0.9",
                 "VLM_PORT=30099",
-                "RTVI_VLM_MODEL_PATH=ngc:nim/nvidia/cosmos-reason2-8b:hf-1208",
+                "RTVI_VLM_MODEL_PATH=ngc:nim/nvidia/cosmos3-nano-reasoner:bf16-final",
                 "COMPOSE_PROFILES=${BP_PROFILE}_${MODE},${BP_PROFILE}_${MODE}_${HARDWARE_PROFILE},llm_${LLM_MODE}_${LLM_NAME_SLUG}",
             ),
             profile=dcu.PROFILE_ALERTS,
@@ -658,11 +700,11 @@ class TestBuildResolvedEnv:
         assert resolved["RTVI_VLM_INPUT_WIDTH"] == dcu.EDGE_ALERTS_RTVI_INPUT_WIDTH
         assert resolved["RTVI_VLM_INPUT_HEIGHT"] == dcu.EDGE_ALERTS_RTVI_INPUT_HEIGHT
         assert resolved["RTVI_VLM_DEFAULT_NUM_FRAMES_PER_SECOND_OR_FIXED_FRAMES_CHUNK"] == dcu.EDGE_ALERTS_RTVI_FPS
-        assert resolved["RTVI_VLM_MODEL_PATH"] == "ngc:nim/nvidia/cosmos-reason2-8b:hf-1208"
+        assert resolved["RTVI_VLM_MODEL_PATH"] == "ngc:nim/nvidia/cosmos3-nano-reasoner:bf16-final"
         assert resolved["RTVI_VLM_ENDPOINT"] == "http://10.0.0.9:30099/v1"
         assert resolved["LLM_DEVICE_ID"] == "0"
         assert resolved["VLM_DEVICE_ID"] == "1"
-        assert resolved["VLM_NAME"] == "nim_nvidia_cosmos-reason2-8b_hf-1208"
+        assert resolved["VLM_NAME"] == "nim_nvidia_cosmos3-nano-reasoner_bf16-final"
         assert resolved["VLM_NAME_SLUG"] == "none"
 
     def test_build_resolved_env_alerts_local_applies_vlm_runtime_overrides(
@@ -679,11 +721,11 @@ class TestBuildResolvedEnv:
                 "LLM_NAME=llm-a",
                 "LLM_NAME_SLUG=llm-a-slug",
                 "VLM_MODE=local_shared",
-                "VLM_NAME=nim_nvidia_cosmos-reason2-8b_hf-1208",
+                "VLM_NAME=nim_nvidia_cosmos3-nano-reasoner_bf16-final",
                 "VLM_NAME_SLUG=none",
                 "HOST_IP=10.0.0.9",
-                "RTVI_VLM_MODEL_PATH=ngc:nim/nvidia/cosmos-reason2-8b:hf-1208",
-                "RTVI_VLM_MODEL_TO_USE=cosmos-reason2",
+                "RTVI_VLM_MODEL_PATH=ngc:nim/nvidia/cosmos3-nano-reasoner:bf16-final",
+                "RTVI_VLM_MODEL_TO_USE=cosmos-reason3",
                 "COMPOSE_PROFILES=${BP_PROFILE}_${MODE},llm_${LLM_MODE}_${LLM_NAME_SLUG}",
             ),
             profile=dcu.PROFILE_ALERTS,
@@ -696,10 +738,10 @@ class TestBuildResolvedEnv:
 
         resolved = dcu.build_resolved_env(recipe)
 
-        assert resolved["VLM_NAME"] == "nim_nvidia_cosmos-reason2-8b_hf-1208"
+        assert resolved["VLM_NAME"] == "nim_nvidia_cosmos3-nano-reasoner_bf16-final"
         assert resolved["VLM_NAME_SLUG"] == "none"
-        assert resolved["RTVI_VLM_MODEL_PATH"] == "ngc:nim/nvidia/cosmos-reason2-8b:hf-1208"
-        assert resolved["RTVI_VLM_MODEL_TO_USE"] == "cosmos-reason2"
+        assert resolved["RTVI_VLM_MODEL_PATH"] == "ngc:nim/nvidia/cosmos3-nano-reasoner:bf16-final"
+        assert resolved["RTVI_VLM_MODEL_TO_USE"] == "cosmos-reason3"
 
     def test_build_resolved_env_alerts_thor_applies_shared_vlm_overrides(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -725,9 +767,9 @@ class TestBuildResolvedEnv:
             hardware_profile_env_overrides={
                 "thor": {
                     "VLM_NAME_SLUG": "none",
-                    "VLM_NAME": "nim_nvidia_cosmos-reason2-8b_hf-1208",
-                    "RTVI_VLM_MODEL_PATH": "ngc:nim/nvidia/cosmos-reason2-8b:hf-1208",
-                    "RTVI_VLM_MODEL_TO_USE": "cosmos-reason2",
+                    "VLM_NAME": "nim_nvidia_cosmos3-nano-reasoner_bf16-final",
+                    "RTVI_VLM_MODEL_PATH": "ngc:nim/nvidia/cosmos3-nano-reasoner:bf16-final",
+                    "RTVI_VLM_MODEL_TO_USE": "cosmos-reason3",
                     "RTVI_VLLM_GPU_MEMORY_UTILIZATION": "0.35",
                     "VLM_MODEL_TYPE": "rtvi",
                 },
@@ -741,11 +783,11 @@ class TestBuildResolvedEnv:
 
         resolved = dcu.build_resolved_env(recipe)
 
-        assert resolved["VLM_NAME"] == "nim_nvidia_cosmos-reason2-8b_hf-1208"
+        assert resolved["VLM_NAME"] == "nim_nvidia_cosmos3-nano-reasoner_bf16-final"
         assert resolved["VLM_NAME_SLUG"] == "none"
         assert resolved["VLM_BASE_URL"] == f"http://10.0.0.8:{dcu.THOR_VLM_PORT}"
-        assert resolved["RTVI_VLM_MODEL_PATH"] == "ngc:nim/nvidia/cosmos-reason2-8b:hf-1208"
-        assert resolved["RTVI_VLM_MODEL_TO_USE"] == "cosmos-reason2"
+        assert resolved["RTVI_VLM_MODEL_PATH"] == "ngc:nim/nvidia/cosmos3-nano-reasoner:bf16-final"
+        assert resolved["RTVI_VLM_MODEL_TO_USE"] == "cosmos-reason3"
         assert resolved["RTVI_VLLM_GPU_MEMORY_UTILIZATION"] == "0.35"
 
 
@@ -1438,7 +1480,7 @@ class TestGenerateDryRunArtifacts:
                 "LLM_NAME=llm-a",
                 "LLM_NAME_SLUG=llm-a-slug",
                 "VLM_MODE=local",
-                "VLM_NAME=nim_nvidia_cosmos-reason2-8b_hf-1208",
+                "VLM_NAME=nim_nvidia_cosmos3-nano-reasoner_bf16-final",
                 "VLM_NAME_SLUG=none",
                 "HOST_IP=10.0.0.9",
                 "VLM_PORT=30099",

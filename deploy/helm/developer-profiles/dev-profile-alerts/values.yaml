@@ -50,14 +50,16 @@ global:
   llmBaseUrl: ""
   vlmBaseUrl: ""
   llmName: "nvidia/nvidia-nemotron-nano-9b-v2"
-  vlmName: "nvidia/cosmos-reason2-8b"
+  vlmName: "nim_nvidia_cosmos3-nano-reasoner_bf16-final"
   # When true (default), vss-vios-sensor uses the same PVC base name as vss-vios-streamprocessing for vst-data / vst-video. Keep aligned with vios.vstStorage.createSharedPvcs.
   createSharedVstPvcs: true
 
 # External access: set global.externalScheme / externalHost / externalPort in your values file (no separate externalAccess.baseUrl).
 
 # Verification stack enabled by default. Image repository/tag/replicas: charts/<name>/values.yaml (override when needed).
-# Redis is the shared StatefulSet from helm/services/infra (vanilla redis:8.2.2-alpine). Extend with a Redis Stack image + values if modules are required.
+# Redis is the shared StatefulSet from helm/services/infra (vanilla redis:8.2.2-alpine),
+# used by the CV / streamprocessing (sdrc) pipeline. Alert MS no longer uses Redis
+# (dedup/filter state is in-process; verdict protection + alert configs are in Elasticsearch).
 infra:
   enabled: true
   phoenix:
@@ -69,7 +71,10 @@ infra:
         value: "/phoenix"
   redis:
     enabled: true
-    # Reference parity: alert-bridge uses JSON.SET for prompt bootstrap; load RedisJSON/Search/Bloom/TimeSeries modules.
+    # Shared Redis for the CV / streamprocessing (sdrc) pipeline. The
+    # RedisJSON/Search/Bloom/TimeSeries modules below were originally loaded
+    # for alert-bridge's JSON.SET prompt bootstrap; Alert MS no longer uses
+    # Redis, so they can be dropped once no other consumer needs them.
     command: ["redis-server"]
     args:
       - "--loadmodule"
@@ -297,7 +302,7 @@ agent:
       - name: LLM_NAME
         value: '{{- $g := .Values.global | default dict }}{{ trim (coalesce .Values.llmName ((index $g "llmName") | default "") "nvidia/nvidia-nemotron-nano-9b-v2") }}'
       - name: VLM_NAME
-        value: '{{- $g := .Values.global | default dict }}{{ trim (coalesce .Values.vlmName ((index $g "vlmName") | default "") "nvidia/cosmos-reason2-8b") }}'
+        value: '{{- $g := .Values.global | default dict }}{{ trim (coalesce .Values.vlmName ((index $g "vlmName") | default "") "nim_nvidia_cosmos3-nano-reasoner_bf16-final") }}'
       - name: EVAL_LLM_JUDGE_NAME
         value: '{{- $g := .Values.global | default dict }}{{- $ln := trim (coalesce .Values.llmName ((index $g "llmName") | default "") "nvidia/nvidia-nemotron-nano-9b-v2") }}{{ coalesce .Values.evalLlmJudgeName $ln }}'
       - name: EVAL_LLM_JUDGE_BASE_URL
@@ -309,7 +314,7 @@ agent:
       - name: AGENT_BASE_URL
         value: '{{- $g := .Values.global | default dict }}{{- $eh := index $g "externalHost" | default "" | trim }}{{- $es := index $g "externalScheme" | default "http" }}{{- $ep := index $g "externalPort" | default "" | trim }}{{- $globalBase := ternary (ternary (printf "%s://%s:%s" $es $eh $ep) (printf "%s://%s" $es $eh) (ne $ep "")) "" (ne $eh "") }}{{- $pfx := default false (coalesce .Values.useReleaseNamePrefix ((index $g "useReleaseNamePrefix") | default false)) }}{{- $vssAgentHttp := ternary (printf "http://%s-vss-agent:8000" .Release.Name) "http://vss-agent:8000" $pfx }}{{ coalesce .Values.vssAgentExternalUrl .Values.vstExternalUrl $globalBase $vssAgentHttp }}'
       - name: VSS_AGENT_VERSION
-        value: '{{ .Values.vssAgentVersion | default "3.2.0" }}'
+        value: '{{ .Values.vssAgentVersion | default "3.3.0-65576357eb80" }}'
     waitForDependencies:
       enabled: true
   vss-va-mcp:
@@ -352,11 +357,11 @@ vss-agent-ui:
 vss-alert-bridge:
   enabled: true
   kafkaBootstrapServers: ""
-  redisHost: ""
-  redisPort: "6379"
+  # Redis removed: Alert MS keeps dedup/filter state in-process and durable
+  # state (verdict protection, alert configs) in Elasticsearch.
   elasticHosts: ""
   vlmBaseUrl: '{{- if (trim (.Values.rtviVlmBaseUrl | default "")) }}{{ trim .Values.rtviVlmBaseUrl }}{{- else }}{{- $g := .Values.global | default dict }}{{- $pfx := default false (coalesce .Values.useReleaseNamePrefix ((index $g "useReleaseNamePrefix") | default false)) }}{{- $svc := trim (.Values.rtviVlmServiceName | default "vss-rtvi-vlm") }}{{- printf "http://%s:8000" (ternary (printf "%s-%s" .Release.Name $svc) $svc $pfx) -}}{{- end }}'
-  vlmName: "nim_nvidia_cosmos-reason2-8b_hf-1208"
+  vlmName: "nim_nvidia_cosmos3-nano-reasoner_bf16-final"
   vstBaseUrl: ""
   alertReviewMediaBaseDir: ""
   configVariant: ""
@@ -369,7 +374,7 @@ analytics:
     enabled: true
     command:
       - python3
-      - apps/dev_example/main_dev_example_app.py
+      - apps/search_and_alerts/main_search_and_alerts_app.py
       - --config
       - /resources/vss-behavior-analytics-config.json
     config:
@@ -380,7 +385,8 @@ analytics:
             "topics": [
               {"name": "raw", "value": "mdx-raw"},
               {"name": "notification", "value": "mdx-notification"},
-              {"name": "incidents", "value": "mdx-incidents"}
+              {"name": "incidents", "value": "mdx-incidents"},
+              {"name": "frames", "value": "mdx-frames"}
             ],
             "consumer": {
               "autoOffsetReset": "latest",
@@ -404,9 +410,11 @@ analytics:
             {"name": "sourceType", "value": "kafka"},
             {"name": "sinkType", "value": "kafka"},
             {"name": "numWorkersForIncidentGeneration", "value": "2"},
+            {"name": "numWorkersForBehaviorCreation", "value": "0"},
+            {"name": "numWorkersForEmbedFiltering", "value": "0"},
             {"name": "fovCountViolationIncidentEnable", "value": "true"},
             {"name": "fovCountViolationIncidentObjectThreshold", "value": "1"},
-            {"name": "fovCountViolationIncidentThreshold", "value": "0.1"},
+            {"name": "fovCountViolationIncidentThreshold", "value": "2"},
             {"name": "fovCountViolationIncidentExpirationWindow", "value": "0.5"},
             {"name": "fovCountViolationIncidentObjectType", "value": "person"}
           ]

@@ -27,7 +27,9 @@ scripts:
 
 image:
   repository: nvcr.io/nvidia/vss-core/vss-rt-cv
-  tag: "3.2.0"
+  # For multi-arch: 3.2.1
+  # For DGX-SPARK (SBSA): 3.2.1-sbsa
+  tag: "3.2.1"
   pullPolicy: IfNotPresent
 
 replicas: 1

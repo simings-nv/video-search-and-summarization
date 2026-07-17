@@ -17,11 +17,11 @@ apiVersion: v2
 name: rtvi
 description: Shared RTVI umbrella chart
 type: application
-version: 3.2.0
+version: 3.2.1
 appVersion: "1.0"
 dependencies:
   - name: vss-rtvi-cv
-    version: 3.2.0
+    version: 3.2.1
     repository: "file://./charts/rtvi-cv"
     condition: vss-rtvi-cv.enabled
   - name: vss-rtvi-vlm
@@ -29,7 +29,7 @@ dependencies:
     repository: "file://./charts/rtvi-vlm"
     condition: vss-rtvi-vlm.enabled
   - name: vss-rtvi-embed
-    version: 3.2.0
+    version: 3.2.1
     repository: "file://./charts/rtvi-embed"
     condition: vss-rtvi-embed.enabled
 maintainers:
