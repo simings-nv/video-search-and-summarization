@@ -13,7 +13,7 @@
   },
   "expects": [
     {
-      "query": "Bring up what the report eval needs on `{{platform}}`, autonomously (non-interactive; do not pause for confirmation): (1) a Cosmos Reason3 (CR3) VLM — model `nvidia/cosmos3-nano-reasoner` (or `nvidia/cosmos3-super-reasoner`) — reachable for chat/completions, and (2) the full VIOS storage stack (ingress, sensor-ms, streamprocessing-ms, and postgres) so video upload and clip materialization work. The simplest way to bring the full VIOS group up together is `/vss-deploy-profile -p base`; the VSS agent, agent UI, LLM NIM, and redis are not needed for this eval. The CR3 VLM may be served LOCALLY (a NIM on port 30082, VLM_MODE=local_shared, VLM_NAME=nvidia/cosmos3-nano-reasoner, VLM_NAME_SLUG=cosmos3-reasoner, VLM_PORT=30082) or REMOTELY (a hosted CR3 endpoint via VLM_BASE_URL/VLM_NAME with the appropriate NVIDIA_API_KEY) — either is fine as long as the resolved VLM model is CR3. Hard requirements: a CR3 VLM answers /v1/chat/completions (locally on http://localhost:30082/v1 or at the configured remote CR3 endpoint), and the full VIOS group is healthy with VST answering on http://localhost:30888/vst/api/v1.",
+      "query": "Deploy the necessary prerequisites for report generation on `{{platform}}` via `/vss-deploy-profile -p base`. Run autonomously.\n\n**Environment & prerequisites:** Need a CR3 VLM (nvidia/cosmos3-nano-reasoner or nvidia/cosmos3-super-reasoner, local or remote) and the full VIOS stack reachable at http://localhost:30888/vst/api/v1 so `/vss-generate-video-report` can upload clips and call the VLM. See `skills/vss-generate-video-report/SKILL.md`.",
       "checks": [
         "`curl -sf --max-time 10 http://localhost:30082/v1/models` returns HTTP 200 and its JSON `.data[].id` list includes nvidia/cosmos3-nano-reasoner or nvidia/cosmos3-super-reasoner (or, for remote deploy, the same GET against ${VLM_BASE_URL}/v1/models with deployment credentials lists a CR3 model id)",
         "`curl -sf --max-time 10 -o /dev/null -w '%{http_code}' http://localhost:30888/vst/api/v1/sensor/version` returns exit 0 (VST ingress + sensor-ms reachable on port 30888)",
@@ -22,7 +22,7 @@
       ]
     },
     {
-      "query": "First confirm the VIOS storage stack is reachable (GET http://localhost:30888/vst/api/v1/sensor/version returns 200), then check if the warehouse_safety_0001 video is already uploaded on VST (GET /vst/api/v1/sensor/list). If it doesn't exist, upload the warehouse_safety_0001 video to VIOS with timestamp 2025-01-01T00:00:00.000Z. If it exists, skip the uploading. Only consider the upload successful once /sensor/list actually shows the sensor.",
+      "query": "Check if the warehouse_safety_0001 video is already uploaded on VST. If it doesn't exist, upload the warehouse_safety_0001 video to VIOS with timestamp 2025-01-01T00:00:00.000Z. If it exists, skip the uploading. Only consider the upload successful once /sensor/list actually shows the sensor.",
       "checks": [
         "`curl -sf --max-time 10 -o /dev/null -w '%{http_code}' http://localhost:30888/vst/api/v1/sensor/version` returns exit 0 before the upload attempt",
         "Trajectory or reasoning shows probing VST/VIOS for warehouse_safety_0001 before deciding to upload — for example listing sensors/streams via the agent tools (or equivalent REST such as GET /vst/api/v1/sensor/list); probe order not enforced",
@@ -31,7 +31,7 @@
       ]
     },
     {
-      "query": "Verify the VSS stack is ready for the **report** skill. Confirm VST reachable and at least one stream is registered, the VLM endpoint resolves, and a clip can actually be materialized for warehouse_safety_0001. IMPORTANT: warehouse_safety_0001 is the sensor NAME, not its streamId — a VIOS file upload assigns a random UUID as sensorId/streamId. First resolve the real streamId: GET http://localhost:30888/vst/api/v1/sensor/list and take the sensorId/streamId of the entry whose name is warehouse_safety_0001 (it will be a UUID, e.g. 1a2d7922-...). Then fetch the recorded timeline via GET http://localhost:30888/vst/api/v1/storage/<streamId>/timelines and request a short (2-3s) clip URL for a range INSIDE that timeline (the video was uploaded at timestamp 2025-01-01T00:00:00.000Z, so a range like startTime=2025-01-01T00:00:01.000Z&endTime=2025-01-01T00:00:03.000Z is safe) using GET http://localhost:30888/vst/api/v1/storage/file/<streamId>/url with container=mp4&disableAudio=true. Report any HTTP 500 from the clip endpoint as a blocker rather than proceeding.",
+      "query": "Verify the VSS stack is ready for the **vss-generate-video-report** skill. Confirm VST is reachable with at least one stream registered, the CR3 VLM endpoint resolves, and a short clip can be materialized for warehouse_safety_0001.",
       "checks": [
         "`curl -sf --max-time 10 -o /dev/null -w '%{http_code}' http://localhost:30888/vst/api/v1/sensor/version` returns 200",
         "`curl -sf --max-time 10 http://localhost:30888/vst/api/v1/sensor/streams` returns HTTP 200 and a non-empty JSON body",
@@ -41,7 +41,7 @@
       ]
     },
     {
-      "query": "Give me a report for warehouse_safety_0001. Call the resolved CR3 VLM directly at its /v1/chat/completions endpoint (a local NIM on http://localhost:30082/v1 if deployed locally, otherwise the configured remote CR3 endpoint) — the vss-agent container may be absent, so do NOT rely on it or POST to :8000/generate.\n\n**Environment & prerequisites:** Use Mode A path A1 (VST clip URL) — the video is already uploaded to VST. warehouse_safety_0001 is the sensor NAME; resolve its real streamId first (GET http://localhost:30888/vst/api/v1/sensor/list, match name=warehouse_safety_0001 to its sensorId/streamId, which is a UUID for VIOS file uploads — using the name in the storage path 404s). Before requesting a clip, fetch the recorded timeline (GET http://localhost:30888/vst/api/v1/storage/<streamId>/timelines) and pick a short (2-3s) range INSIDE it; the upload timestamp is 2025-01-01T00:00:00.000Z so a range like startTime=2025-01-01T00:00:01.000Z&endTime=2025-01-01T00:00:03.000Z is safe. Always pass container=mp4&disableAudio=true on the clip request (GET http://localhost:30888/vst/api/v1/storage/file/<streamId>/url). Do NOT fall back to the A2 local-file/base64 path while VST is reachable and serving this sensor; if the clip endpoint returns HTTP 500, retry with a timeline-correct range rather than switching to base64.",
+      "query": "Give me a report for warehouse_safety_0001.",
       "checks": [
         "The run sourced the clip via Mode A path A1 (VST clip URL) rather than an A2 base64 data URL or POST /generate. It is sufficient that the run obtained a clip URL of the form http://localhost:30888/vst/api/v1/storage/file/<streamId>/url with startTime/endTime query params plus container=mp4&disableAudio=true and a JSON body containing videoUrl — this MAY reuse a clip URL already materialized in step 3",
         "The run performed at least one successful POST to /v1/chat/completions on the resolved CR3 VLM endpoint (http://localhost:30082/v1 for local NIM, or the configured remote CR3 endpoint) with Content-Type application/json, model set to a CR3 id (nvidia/cosmos3-nano-reasoner or nvidia/cosmos3-super-reasoner), and a messages array whose first user content list contains both a text block and a video_url block referencing the clip URL; HTTP 2xx. A fallback to a non-CR3 model (e.g. cosmos-reason2, meta/llama-3.2-90b-vision-instruct) does NOT satisfy this check",
@@ -58,7 +58,7 @@
       ]
     },
     {
-      "query": "Before generating an incident report, use `/vss-query-analytics` to verify VA-MCP incident analytics is ready.\n\nIf analytics is unavailable (for example VA-MCP endpoint unreachable or initialization fails), deploy `alerts` via `/vss-deploy-profile -p alerts`, then re-check `/vss-query-analytics` until it initializes successfully.",
+      "query": "Before generating an incident report, use `/vss-query-analytics` to verify VA-MCP incident analytics is ready. If analytics is unavailable, deploy `alerts` via `/vss-deploy-profile -p alerts`, then re-check until it initializes successfully.",
       "checks": [
         "The run initialized a VA-MCP session against http://localhost:9901/mcp (POST with method=initialize) and extracted mcp-session-id from the response header",
         "The run issued at least one tools/call POST to http://localhost:9901/mcp with mcp-session-id header using the /vss-query-analytics skill",
@@ -66,7 +66,7 @@
       ]
     },
     {
-      "query": "Insert one VLM-verified incident document into Elasticsearch index mdx-vlm-incidents, then refresh the index and verify video_analytics__get_incidents(max_count=1) returns it. Assume the alerts deployment is already up. The document MUST include ALL of these fields (VA-MCP will not return it otherwise): both Id and a lowercase id set to the SAME unique value (e.g. a UUID); timestamp (current ISO-8601 time) and end (a slightly later ISO-8601 time); sensorId; category; type (e.g. \"incident\"); objectIds (a non-empty list); and info.verdict=confirmed.",
+      "query": "Insert one VLM-verified incident into Elasticsearch index mdx-vlm-incidents (include Id, id, timestamp, end, sensorId, category, type, objectIds, and info.verdict=confirmed), refresh the index, and verify video_analytics__get_incidents(max_count=1) returns it. Assume the alerts deployment is already up.",
       "checks": [
         "`curl -sf http://localhost:9200` returns exit 0 (Elasticsearch reachable)",
         "The run inserted exactly one incident document into Elasticsearch index mdx-vlm-incidents (PUT/POST to http://localhost:9200/mdx-vlm-incidents/_doc/...), not mdx-incidents",
@@ -78,7 +78,7 @@
       ]
     },
     {
-      "query": "Give me a report on the last incident.\n\n",
+      "query": "Give me a report on the last incident.",
       "checks": [
         "The run initialized a VA-MCP session against http://localhost:9901/mcp (POST with method=initialize) and extracted mcp-session-id from the response header",
         "The run issued at least one tools/call POST to http://localhost:9901/mcp with the mcp-session-id header set, calling video_analytics__get_incidents with max_count=1, or calling video_analytics__get_incident if an incident ID was already known",
@@ -89,7 +89,7 @@
       ]
     },
     {
-      "query": "Give me a report on warehouse_safety_0001.",
+      "query": "Give me a new report on warehouse_safety_0001.",
       "checks": [
         "The run defaulted to Mode A because the query names a sensor/video but does not ask for incidents or provide a time range; it did not ask the user to choose a mode",
         "The run resolved this as Mode A and drove the direct VLM path — a POST to the resolved CR3 VLM /v1/chat/completions endpoint (http://localhost:30082/v1 for local NIM, or the configured remote CR3 endpoint; model nvidia/cosmos3-nano-reasoner or nvidia/cosmos3-super-reasoner) with a video_url block for the clip. Sourcing the clip via the A1 VST clip-URL path is expected, but a fresh successful clip GET is NOT required here if the A1 clip path was already proven earlier in the trajectory (e.g. step 3 readiness or step 4)",
