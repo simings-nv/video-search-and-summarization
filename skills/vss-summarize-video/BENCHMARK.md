@@ -7,7 +7,7 @@ This benchmark summarizes 3-Tier Evaluation from NVSkills-Eval results for the s
 ## Evaluation Summary
 
 - Skill: `vss-summarize-video`
-- Evaluation date: 2026-07-10
+- Evaluation date: 2026-07-15
 - NVSkills-Eval profile: `external`
 - Environment: `astra-sandbox`
 - Dataset: 1 evaluation tasks
@@ -55,10 +55,10 @@ Task composition is derived from the evaluation dataset when possible. Entries w
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 100% (+75%) | 67% (+42%) |
-| Discoverability | 1 | 92% (+42%) | 84% (+43%) |
+| Correctness | 1 | 100% (+75%) | 67% (+45%) |
+| Discoverability | 1 | 100% (+50%) | 84% (+46%) |
 | Effectiveness | 1 | 76% (+56%) | 58% (+34%) |
-| Efficiency | 1 | 78% (+22%) | 77% (+33%) |
+| Efficiency | 1 | 92% (+36%) | 77% (+30%) |
 
 Score values show skill-assisted performance. Values in parentheses show uplift versus the no-skill baseline when baseline data is available.
 

@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache-2.0 <br>
 ## Use Case: <br>
-Developers and engineers use this skill to select, configure, deploy, verify, debug, or tear down NVIDIA VSS (Video Search and Summarization) compose-based profiles on GPU-equipped hosts. <br>
+Developers and engineers deploying NVIDIA Video Search and Summarization (VSS) profiles on GPU-equipped hosts for video analytics workflows. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,9 +25,9 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [VSS GitHub Repository](https://github.com/NVIDIA-AI-Blueprints/video-search-and-summarization) <br>
-- [VSS Prerequisites Documentation](https://docs.nvidia.com/vss/3.2.0/prerequisites.html) <br>
+- [VSS Prerequisites](https://docs.nvidia.com/vss/3.2.0/prerequisites.html) <br>
 - [VSS Documentation](https://docs.nvidia.com/vss/latest/index.html) <br>
+- [GitHub Repository](https://github.com/NVIDIA-AI-Blueprints/video-search-and-summarization) <br>
 
 
 ## Skill Output: <br>
@@ -43,7 +43,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 5 deployment tasks in the NVSkills-Eval external profile. <br>
+Evaluated against 5 evaluation tasks in astra-sandbox environment using NVSkills-Eval external profile. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -67,11 +67,11 @@ Underlying evaluation signals used in this run: <br>
 ## Evaluation Results: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
-| Security | 5 | 100% (+0%) | 100% (+20%) |
-| Correctness | 5 | 88% (+66%) | 87% (+50%) |
-| Discoverability | 5 | 88% (+62%) | 74% (+22%) |
-| Effectiveness | 5 | 66% (+61%) | 70% (+64%) |
-| Efficiency | 5 | 69% (+40%) | 69% (+24%) |
+| Security | 5 | 100% (+0%) | 90% (+10%) |
+| Correctness | 5 | 96% (+81%) | 89% (+67%) |
+| Discoverability | 5 | 90% (+70%) | 92% (+51%) |
+| Effectiveness | 5 | 80% (+75%) | 70% (+64%) |
+| Efficiency | 5 | 71% (+40%) | 88% (+40%) |
 
 ## Skill Version(s): <br>
 3.2.0 (source: frontmatter) <br>

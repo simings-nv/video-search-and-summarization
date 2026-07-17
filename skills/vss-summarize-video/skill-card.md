@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache-2.0 <br>
 ## Use Case: <br>
-Developers and engineers who need to produce narrative summaries of recorded video clips using the VSS video summarization microservice or a VLM fallback path. <br>
+Developers and engineers use this skill to produce narrative summaries of recorded video clips, leveraging the LVS summarization microservice with HITL gating or a VLM fallback. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -27,17 +27,17 @@ Mitigation: Review and scan skill before deployment. <br>
 ## Reference(s): <br>
 - [Video Summarization API Reference](references/video-summarization-api.md) <br>
 - [Video Summarization Deployment](references/video-summarization-deployment.md) <br>
-- [Video Summarization Debugging](references/video-summarization-debugging.md) <br>
 - [Video Summarization Environment Variables](references/video-summarization-environment-variables.md) <br>
-- [HITL Prompts](references/hitl-prompts.md) <br>
+- [Video Summarization Debugging](references/video-summarization-debugging.md) <br>
 - [End-to-End Example](references/end-to-end-example.md) <br>
+- [HITL Prompts](references/hitl-prompts.md) <br>
 - [NVIDIA VSS Documentation](https://docs.nvidia.com/vss/latest/index.html) <br>
 - [GitHub Repository](https://github.com/NVIDIA-AI-Blueprints/video-search-and-summarization) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [API Calls, Analysis] <br>
-**Output Format:** [Markdown with inline bash code blocks] <br>
+**Output Type(s):** [Analysis, Shell commands] <br>
+**Output Format:** [Markdown with verbatim backend output] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
@@ -48,7 +48,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 evaluation task (positive skill-activation case) in the astra-sandbox environment using the NVSkills-Eval external profile. <br>
+Evaluated against 1 evaluation task (positive skill-activation case) in the astra-sandbox environment using the external NVSkills-Eval profile. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -73,10 +73,10 @@ Underlying evaluation signals used in this run: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 100% (+75%) | 67% (+42%) |
-| Discoverability | 1 | 92% (+42%) | 84% (+43%) |
+| Correctness | 1 | 100% (+75%) | 67% (+45%) |
+| Discoverability | 1 | 100% (+50%) | 84% (+46%) |
 | Effectiveness | 1 | 76% (+56%) | 58% (+34%) |
-| Efficiency | 1 | 78% (+22%) | 77% (+33%) |
+| Efficiency | 1 | 92% (+36%) | 77% (+30%) |
 
 ## Skill Version(s): <br>
 3.2.1 (source: frontmatter) <br>

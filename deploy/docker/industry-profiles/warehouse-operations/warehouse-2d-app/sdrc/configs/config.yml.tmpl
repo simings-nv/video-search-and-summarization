@@ -1,7 +1,7 @@
 docker-workload-streamprocessing:
   wl_obj_name: vss-vios-streamprocessing
   port: 4005
-  enable: ${VST_USE_SDRC_ENABLE}
+  enable: true
   WDM_CONSUMER_GRP_ID: sdr-streamprocessing-vios-cg
   WDM_REDIS_CACHE_OBJECT: streamprocessing-data
   WDM_XDS_USE_POD_DNS: true
@@ -27,7 +27,7 @@ docker-workload-streamprocessing:
   WDM_KFK_ENABLE: false
   WDM_MSG_TOPIC: vst_events
   WDM_DS_SWAP_ID_NAME: false
-  WDM_ADD_REMOVE_RETRY_ATTEMPTS: 50
+  WDM_ADD_REMOVE_RETRY_ATTEMPTS: 500
   WDM_DISABLE_WERKZEUG_LOGGING: true
   WDM_WL_OBJECT_NAME: vss-vios-streamprocessing
   VST_STREAMS_ENDPOINT: http://vss-vios-sensor:30000/api/v1/sensor/streams
@@ -40,7 +40,7 @@ docker-workload-streamprocessing:
   WDM_MS_LISTENER_PORT: 10000
   NOHEADERTARGETROUTE: true
   HEADERLESS_SERVICE_ENDPOINTS: "[\"vss-vios-streamprocessing:30001\"]"
-  WDM_WL_REDIS_MSG_FIELD: sensor.id
+  WDM_WL_REDIS_MSG_FIELD: value
   WDM_MSG_KEY: vst_events
   WDM_CLUSTER_CONFIG_FILE: /configs/docker_cluster_config-streamprocessing.json
 
@@ -54,6 +54,7 @@ docker-workload-rtvi-cv:
   WDM_XDS_USE_POD_DNS: true
   WDM_XDS_USE_IP_ADDRESS: false
   WDM_REDIS_MSG_KEY: vst.event
+  WDM_WL_REDIS_MSG_FIELD: value
   REDIS_MSG_KEY: vst.event
   WDM_INITIALIZE_FROM_VST: false
   WDM_KFK_ENABLE: ${RTVI_CV_WDM_KFK_ENABLE}

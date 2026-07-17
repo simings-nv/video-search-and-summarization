@@ -7,7 +7,7 @@ This benchmark summarizes 3-Tier Evaluation from NVSkills-Eval results for the s
 ## Evaluation Summary
 
 - Skill: `vss-deploy-video-embedding`
-- Evaluation date: 2026-07-10
+- Evaluation date: 2026-07-15
 - NVSkills-Eval profile: `external`
 - Environment: `astra-sandbox`
 - Dataset: 2 evaluation tasks
@@ -55,10 +55,10 @@ Task composition is derived from the evaluation dataset when possible. Entries w
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
 | Security | 2 | 100% (+0%) | 100% (+0%) |
-| Correctness | 2 | 75% (+75%) | 50% (+38%) |
-| Discoverability | 2 | 50% (+50%) | 0% (-25%) |
-| Effectiveness | 2 | 95% (+82%) | 85% (+72%) |
-| Efficiency | 2 | 61% (+34%) | 28% (-16%) |
+| Correctness | 2 | 50% (+50%) | 50% (+50%) |
+| Discoverability | 2 | 0% (+0%) | 0% (+0%) |
+| Effectiveness | 2 | 88% (+75%) | 84% (+66%) |
+| Efficiency | 2 | 27% (-0%) | 28% (-0%) |
 
 Score values show skill-assisted performance. Values in parentheses show uplift versus the no-skill baseline when baseline data is available.
 

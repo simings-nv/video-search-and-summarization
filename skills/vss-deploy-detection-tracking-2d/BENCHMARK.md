@@ -7,7 +7,7 @@ This benchmark summarizes 3-Tier Evaluation from NVSkills-Eval results for the s
 ## Evaluation Summary
 
 - Skill: `vss-deploy-detection-tracking-2d`
-- Evaluation date: 2026-07-10
+- Evaluation date: 2026-07-15
 - NVSkills-Eval profile: `external`
 - Environment: `astra-sandbox`
 - Dataset: 2 evaluation tasks
@@ -54,11 +54,11 @@ Task composition is derived from the evaluation dataset when possible. Entries w
 
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
-| Security | 2 | 100% (+0%) | 100% (+0%) |
-| Correctness | 2 | 73% (+42%) | 75% (+32%) |
-| Discoverability | 2 | 97% (+40%) | 89% (+26%) |
-| Effectiveness | 2 | 60% (+36%) | 48% (+3%) |
-| Efficiency | 2 | 85% (+27%) | 80% (+10%) |
+| Security | 2 | 100% (+0%) | 50% (+0%) |
+| Correctness | 2 | 64% (+28%) | 94% (+34%) |
+| Discoverability | 2 | 97% (+41%) | 90% (+26%) |
+| Effectiveness | 2 | 52% (+32%) | 78% (+28%) |
+| Efficiency | 2 | 86% (+26%) | 77% (+10%) |
 
 Score values show skill-assisted performance. Values in parentheses show uplift versus the no-skill baseline when baseline data is available.
 

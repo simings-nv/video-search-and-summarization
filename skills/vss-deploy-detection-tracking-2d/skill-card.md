@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache-2.0 <br>
 ## Use Case: <br>
-Developers and engineers deploying, operating, debugging, and calling the REST API of the RTVI-CV 2D detection/tracking microservice for real-time video intelligence applications. <br>
+Developers and engineers who need to deploy, operate, debug, and interact with the RTVI-CV 2D detection and tracking microservice for real-time video intelligence applications. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,13 +25,12 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Deploy Workflow Reference](references/deploy-vss-detection-tracking-2d.md) <br>
-- [API Usage Reference](references/usage-vss-detection-tracking-2d.md) <br>
+- [Deploy RTVI-CV Detection Tracking 2D](references/deploy-vss-detection-tracking-2d.md) <br>
+- [Usage / REST API Reference](references/usage-vss-detection-tracking-2d.md) <br>
 - [API Reference](references/api-reference.md) <br>
 - [Pipeline Configuration](references/pipeline-config.md) <br>
-- [Platform Support](references/platforms.md) <br>
 - [Troubleshooting](references/troubleshooting.md) <br>
-- [VSS Documentation](https://docs.nvidia.com/vss/latest/index.html) <br>
+- [NVIDIA VSS Documentation](https://docs.nvidia.com/vss/latest/index.html) <br>
 - [GitHub Repository](https://github.com/NVIDIA-AI-Blueprints/video-search-and-summarization) <br>
 
 
@@ -42,13 +41,13 @@ Mitigation: Review and scan skill before deployment. <br>
 **Other Properties Related to Output:** [None] <br>
 
 ## Evaluation Agents Used: <br>
-- Claude Code (`claude-code`) <br>
-- Codex (`codex`) <br>
+- claude-code <br>
+- codex <br>
 
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 2 evaluation tasks (1 positive skill-activation, 1 negative) via NVSkills-Eval external profile. <br>
+Evaluated against 2 internal evaluation tasks (1 positive skill-activation, 1 negative). <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -72,11 +71,11 @@ Underlying evaluation signals used in this run: <br>
 ## Evaluation Results: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
-| Security | 2 | 100% (+0%) | 100% (+0%) |
-| Correctness | 2 | 73% (+42%) | 75% (+32%) |
-| Discoverability | 2 | 97% (+40%) | 89% (+26%) |
-| Effectiveness | 2 | 60% (+36%) | 48% (+3%) |
-| Efficiency | 2 | 85% (+27%) | 80% (+10%) |
+| Security | 2 | 100% (+0%) | 50% (+0%) |
+| Correctness | 2 | 64% (+28%) | 94% (+34%) |
+| Discoverability | 2 | 97% (+41%) | 90% (+26%) |
+| Effectiveness | 2 | 52% (+32%) | 78% (+28%) |
+| Efficiency | 2 | 86% (+26%) | 77% (+10%) |
 
 ## Skill Version(s): <br>
 3.2.1 (source: frontmatter) <br>

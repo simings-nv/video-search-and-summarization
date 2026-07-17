@@ -6,19 +6,18 @@ VIOS (Video I/O Service) is the video ingest and storage layer of the [NVIDIA VS
 
 ### Step 1 — Build the images
 
-Pick whichever fits. **Option A & B on a fresh clone** — the compile toolchain and base image are built automatically the first time, then reused on every later run (never rebuilt unless you delete them or pass `no-cache`).
-Option C reuses an already-built toolchain.
+Pick whichever fits. **Both work on a fresh clone** — the compile toolchain and base image are built automatically the first time, then reused on every later run (never rebuilt unless you delete them).
 
 ```bash
-# Option A — build all VIOS modules (sensor + streamprocessing) plus NVStreamer. Also auto-builds the toolchain + runtime-base image if not present.
+# Option A — build everything (toolchain + base + all modules (sensor + streamprocessing) + NVStreamer)
 ./build.sh all
 
-# Option B — build only the specified module(s) / NVStreamer. Also auto-builds the toolchain + runtime-base image if not present.
+# Option B — build only the part(s) you need
 ./build.sh container module=streamprocessing          # one module
 ./build.sh container module=sensor,streamprocessing   # several modules
 ./build.sh container nvstreamer                       # NVStreamer container only
 
-# Option C — reuse a toolchain/runtime-base you already have (pulled from a registry, or built earlier locally)
+# Option C — reuse a toolchain/base you already have (pulled from a registry, or built earlier)
 # Point at it via the toolchain-image= flag OR the X86_BUILD_IMAGE / AARCH64_CC_IMAGE env var.
 ./build.sh container module=sensor,streamprocessing no-auto-deps \
   toolchain-image=my-registry.example.com/vios-build:x86-24.04-cuda13.0.0 \
@@ -33,7 +32,6 @@ Option C reuses an already-built toolchain.
 
 **Good to know:**
 
-- **What they are.** The *toolchain* is the image with the compiler + CUDA/build deps used to compile VIOS; the *runtime base* (`vios-base`) is the slim runtime image (system libraries, no compiler) that the service containers are layered on. Both are cached and reused so builds stay fast.
 - **Toolchain + base are built once, then reused.** `build.sh` detects them if they already exist — built earlier, or pulled from a registry — and **skips** them. They are never rebuilt on a repeat run; force a rebuild only by deleting the image or adding `no-cache`.
 - **You can start with a single module.** Jump straight to `./build.sh container module=streamprocessing` (or `nvstreamer`) on a fresh clone — the toolchain + base are auto-built that first time, then reused. No need to run `all` first.
 - **Bringing your own toolchain/base?** Under the default tags, nothing changes — they're detected and skipped. Under custom registry tags, use **Option C** above to point at them and skip the local build entirely.
@@ -157,7 +155,7 @@ The repo ships agent skills under `services/vios/.claude/sqa/` that map natural-
 
 | Say this | What it does |
 | --- | --- |
-| *"deploy vios"* | Default deploy — VIOS only (NVStreamer is opt-in; not deployed unless requested). |
+| *"deploy vios"* | Default deploy; probes NVStreamer and asks whether to bring it up. |
 | *"deploy vios + nvstreamer"* / *"deploy full stack"* | Brings up both. |
 | *"deploy vios without nvstreamer"* | VIOS only (RTSP from an external camera/VMS). |
 | *"deploy vios in milestone adaptor mode"* | Sets `VST_ADAPTOR=milestone_onvif` + `NGINX_MODE=mms`; prompts for VMS `ip`/`user`/`password`. |
