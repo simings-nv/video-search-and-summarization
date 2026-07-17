@@ -145,7 +145,7 @@ def generate_solve_script(platform: str) -> str:
       `data_log/vst/clip_storage` subdirectory pre-created, otherwise the
       bind mount resolves to `/data_log/vst/clip_storage` from the root.
     - Set RTVI_EMBED_PORT=8017 and activate the
-      `bp_developer_search_2d` Compose profile.
+      `rtvi-embed` Compose profile.
     - Disable Kafka and Redis error messages (no broker / Redis peer is
       started alongside the standalone microservice).
     - Wait up to 25 minutes for `/v1/ready` — first boot pulls the
@@ -216,7 +216,7 @@ def generate_solve_script(platform: str) -> str:
         "# --- Bring up rtvi-embed standalone ---",
         'COMPOSE_FILE="$REPO/deploy/docker/services/rtvi/rtvi-embed/rtvi-embed-docker-compose.yml"',
         'cd "$(dirname "$COMPOSE_FILE")"',
-        'docker compose -f "$COMPOSE_FILE" --profile bp_developer_search_2d up -d rtvi-embed',
+        'docker compose -f "$COMPOSE_FILE" --profile rtvi-embed up -d rtvi-embed',
         "",
         "# --- Wait for /v1/ready (up to 25 minutes; start_period is 1200s) ---",
         "for i in $(seq 1 150); do",
