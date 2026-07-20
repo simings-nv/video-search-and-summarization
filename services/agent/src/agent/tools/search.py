@@ -1567,6 +1567,20 @@ class SearchConfig(FunctionBaseConfig, name="search"):
         description="Behavior index name for object embedding lookup.",
     )
 
+    # Explicit lib.search_core runtime. When the required endpoints are set,
+    # the NAT registration uses the shared library instead of legacy NAT tools.
+    es_endpoint: str | None = Field(default=None, description="Elasticsearch endpoint for library-backed search.")
+    cosmos_embed_endpoint: str | None = Field(default=None, description="Cosmos embed service endpoint.")
+    cosmos_embed_model: str = Field(default="cosmos-embed1-448p", description="Cosmos embed model name.")
+    rtvi_cv_endpoint: str | None = Field(default=None, description="RTVI-CV attribute service endpoint.")
+    video_embed_index: str = Field(default="mdx-embed-filtered-2025-01-01")
+    video_embed_index_wildcard: str = Field(default="mdx-embed-filtered-*")
+    behavior_index_wildcard: str = Field(default="mdx-behavior-*")
+    frames_index: str | None = Field(default=None)
+    frames_index_wildcard: str = Field(default="mdx-raw-*")
+    enable_frame_lookup: bool = Field(default=True)
+    request_timeout_seconds: int = Field(default=30, ge=1)
+
 
 class SearchInput(BaseModel):
     """Input for the Search tool"""
@@ -1681,8 +1695,6 @@ class SearchOutput(BaseModel):
 
 @register_function(config_type=SearchConfig, framework_wrappers=[LLMFrameworkEnum.LANGCHAIN])
 async def search(config: SearchConfig, _builder: Builder) -> AsyncGenerator[FunctionInfo]:
-    embed_search = await _builder.get_function(config.embed_search_tool)
-
     agent_llm = None
     if config.agent_mode_prompt:
         agent_llm = await _builder.get_llm(config.agent_mode_llm, wrapper_type=LLMFrameworkEnum.LANGCHAIN)
@@ -1691,6 +1703,15 @@ async def search(config: SearchConfig, _builder: Builder) -> AsyncGenerator[Func
     critic_agent = None
     if config.critic_agent:
         critic_agent = await _builder.get_function(config.critic_agent)
+
+    from agent.tools.search_adapter import NATSearchAdapter
+    from agent.tools.search_adapter import build_search_runtime
+
+    library_runtime = build_search_runtime(config)
+    library_adapter = (
+        NATSearchAdapter(library_runtime, config, agent_llm, critic_agent) if library_runtime is not None else None
+    )
+    embed_search = None if library_adapter is not None else await _builder.get_function(config.embed_search_tool)
 
     async def _search(search_input: SearchInput) -> SearchOutput:
         """
@@ -1701,7 +1722,10 @@ async def search(config: SearchConfig, _builder: Builder) -> AsyncGenerator[Func
         Returns:
             SearchOutput: Search results matching the query.
         """
-        # Use shared core search function (wrapper that collects results)
+        if library_adapter is not None:
+            return await library_adapter.run(search_input)
+
+        assert embed_search is not None
         return await execute_core_search_wrapper(
             search_input=search_input,
             embed_search=embed_search,
@@ -1748,6 +1772,8 @@ async def search(config: SearchConfig, _builder: Builder) -> AsyncGenerator[Func
             ],
         )
     finally:
+        if library_adapter is not None:
+            await library_adapter.aclose()
         try:
             await VSSESClient.close_all()
         except Exception as e:

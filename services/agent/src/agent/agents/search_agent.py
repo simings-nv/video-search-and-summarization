@@ -55,9 +55,9 @@ from agent.tools.search import SearchInput
 from agent.tools.search import SearchOutput
 from agent.tools.search import SearchResult
 from agent.tools.search import execute_core_search
-from agent.tools.vst.timeline import get_timeline
-from agent.tools.vst.utils import get_name_to_stream_id_map
 from agent.utils.time_convert import iso8601_to_datetime
+from lib.vst import get_name_to_stream_id_map
+from lib.vst import get_timeline
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +257,20 @@ class SearchAgentConfig(FunctionBaseConfig, name="search_agent"):
         description="Behavior index name for object embedding lookup.",
     )
 
+    # Explicit lib.search_core runtime. Legacy tool references remain available
+    # as a fallback for profiles that have not migrated yet.
+    es_endpoint: str | None = Field(default=None, description="Elasticsearch endpoint for library-backed search.")
+    cosmos_embed_endpoint: str | None = Field(default=None, description="Cosmos embed service endpoint.")
+    cosmos_embed_model: str = Field(default="cosmos-embed1-448p", description="Cosmos embed model name.")
+    rtvi_cv_endpoint: str | None = Field(default=None, description="RTVI-CV attribute service endpoint.")
+    video_embed_index: str = Field(default="mdx-embed-filtered-2025-01-01")
+    video_embed_index_wildcard: str = Field(default="mdx-embed-filtered-*")
+    behavior_index_wildcard: str = Field(default="mdx-behavior-*")
+    frames_index: str | None = Field(default=None)
+    frames_index_wildcard: str = Field(default="mdx-raw-*")
+    enable_frame_lookup: bool = Field(default=True)
+    request_timeout_seconds: int = Field(default=30, ge=1)
+
 
 # ===== Presentation converters (moved from embed_search.py) =====
 # These operate on SearchOutput (from search.py) instead of VisionLLM.
@@ -342,7 +356,7 @@ def _to_pts(ts: str | float) -> str:
         return str(ts)
 
 
-async def _add_offsets(results: list[SearchResult]) -> None:
+async def _add_offsets(results: list[SearchResult], vst_internal_url: str = "") -> None:
     """Populate start_offset/end_offset (seconds since each stream's timeline start).
 
     video_understanding runs in offset mode, so the agent must pass seconds-since-start, not
@@ -358,7 +372,7 @@ async def _add_offsets(results: list[SearchResult]) -> None:
             continue
         try:
             if r.sensor_id not in stream_start_cache:
-                stream_start_iso, _ = await get_timeline(r.sensor_id)
+                stream_start_iso, _ = await get_timeline(r.sensor_id, vst_internal_url)
                 stream_start_cache[r.sensor_id] = iso8601_to_datetime(stream_start_iso)
             stream_start = stream_start_cache[r.sensor_id]
             # Clamp at 0 to guard against minor clock skew (clip start slightly before timeline
@@ -440,10 +454,6 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
     and streams intermediate steps as AgentMessageChunk.
     """
 
-    # Load function references (for execute_core_search)
-    embed_search_fn = await builder.get_function(config.embed_search_tool)
-    attribute_search_fn = None  # Function reference for fusion_search_rerank
-
     stream_name_resolver = _StreamNameResolver(config.vst_internal_url)
 
     agent_llm = None
@@ -455,7 +465,20 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
     if config.critic_agent:
         critic_agent = await builder.get_function(config.critic_agent)
 
-    logger.info("Search agent initialized with direct tool references")
+    from agent.tools.search_adapter import NATSearchAdapter
+    from agent.tools.search_adapter import build_search_runtime
+
+    library_runtime = build_search_runtime(config)
+    library_adapter = (
+        NATSearchAdapter(library_runtime, config, agent_llm, critic_agent) if library_runtime is not None else None
+    )
+    embed_search_fn = None if library_adapter is not None else await builder.get_function(config.embed_search_tool)
+    attribute_search_fn = None  # Function reference for legacy fusion_search_rerank
+
+    logger.info(
+        "Search agent initialized with %s retrieval",
+        "lib.search_core" if library_adapter is not None else "legacy NAT tool",
+    )
 
     async def _execute_search(search_agent_input: SearchAgentInput) -> SearchOutput:
         """Non-streaming search execution. Returns SearchOutput directly."""
@@ -488,25 +511,31 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             use_critic=use_critic,
         )
 
-        # Use shared core search function (async generator, collect all progress and return final result)
-        search_output = SearchOutput(data=[])
-        async for update in execute_core_search(
-            search_input=search_input,
-            embed_search=embed_search_fn,
-            agent_llm=agent_llm,
-            config=config,
-            builder=builder,
-            attribute_search_fn=attribute_search_fn,
-            critic_agent=critic_agent,
-        ):
-            if isinstance(update, SearchOutput):
-                search_output = update
+        if library_adapter is not None:
+            search_output = await library_adapter.run(
+                search_input,
+                use_attribute_search=search_agent_input.use_attribute_search,
+            )
+        else:
+            assert embed_search_fn is not None
+            search_output = SearchOutput(data=[])
+            async for update in execute_core_search(
+                search_input=search_input,
+                embed_search=embed_search_fn,
+                agent_llm=agent_llm,
+                config=config,
+                builder=builder,
+                attribute_search_fn=attribute_search_fn,
+                critic_agent=critic_agent,
+            ):
+                if isinstance(update, SearchOutput):
+                    search_output = update
 
         final_results = _apply_final_result_limit(
             await stream_name_resolver.resolve(search_output.data),
             search_agent_input,
         )
-        await _add_offsets(final_results)
+        await _add_offsets(final_results, config.vst_internal_url)
         return SearchOutput(data=final_results, search_messages=search_output.search_messages)
 
     async def _execute_search_stream(
@@ -566,15 +595,20 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
             # Use shared core search function (async generator) - yield progress updates in real-time
             search_output = SearchOutput(data=[])
 
-            async for update in execute_core_search(
-                search_input=search_input,
-                embed_search=embed_search_fn,
-                agent_llm=agent_llm,
-                config=config,
-                builder=builder,
-                attribute_search_fn=attribute_search_fn,
-                critic_agent=critic_agent,
-            ):
+            updates = (
+                library_adapter.stream(search_input, use_attribute_search=use_attribute_search_flag)
+                if library_adapter is not None
+                else execute_core_search(
+                    search_input=search_input,
+                    embed_search=embed_search_fn,
+                    agent_llm=agent_llm,
+                    config=config,
+                    builder=builder,
+                    attribute_search_fn=attribute_search_fn,
+                    critic_agent=critic_agent,
+                )
+            )
+            async for update in updates:
                 if isinstance(update, AgentMessageChunk):
                     # Forward progress updates directly
                     yield update
@@ -585,7 +619,7 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
                 await stream_name_resolver.resolve(search_output.data),
                 search_agent_input,
             )
-            await _add_offsets(final_results)
+            await _add_offsets(final_results, config.vst_internal_url)
             result_count = len(final_results)
 
             # Build SearchOutput-compatible JSON
@@ -666,17 +700,21 @@ async def search_agent(config: SearchAgentConfig, builder: Builder) -> AsyncGene
         return SearchAgentInput.model_validate_json(request.messages[-1].content)
 
     # Register the agent
-    yield FunctionInfo.create(
-        single_fn=_execute_search,
-        stream_fn=_execute_search_stream,
-        input_schema=SearchAgentInput,
-        single_output_schema=SearchOutput,
-        stream_output_schema=AgentMessageChunk,
-        converters=[
-            _str_input_converter,
-            _chat_request_input_converter,
-            _to_chat_response,
-            _to_chat_response_chunk,
-            _helper_markdown_bullet_list,
-        ],
-    )
+    try:
+        yield FunctionInfo.create(
+            single_fn=_execute_search,
+            stream_fn=_execute_search_stream,
+            input_schema=SearchAgentInput,
+            single_output_schema=SearchOutput,
+            stream_output_schema=AgentMessageChunk,
+            converters=[
+                _str_input_converter,
+                _chat_request_input_converter,
+                _to_chat_response,
+                _to_chat_response_chunk,
+                _helper_markdown_bullet_list,
+            ],
+        )
+    finally:
+        if library_adapter is not None:
+            await library_adapter.aclose()
